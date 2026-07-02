@@ -1,0 +1,9 @@
+# Ignora l'ambiente virtuale di Python
+venv/
+
+# Ignora i file di cache temporanei che Python crea da solo
+__pycache__/
+*.pyc
+
+# Usi VS Code, puoi ignorare anche la sua cartella di configurazione (opzionale)
+.vscode/
