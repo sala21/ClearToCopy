@@ -1,4 +1,14 @@
 -----------------------------
+SET-UP AMBIENTE
+-----------------------------
+1. Crea un nuovo ambiente virtuale:     python -m venv venv
+
+2. Attivalo:    venv\Scripts\activate
+
+3. Installa le dipendenze:      pip install -r requirements.txt
+
+
+-----------------------------
 FLUSSO LOGICO
 -----------------------------
 

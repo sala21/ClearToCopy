@@ -21,7 +21,16 @@ LANGUAGE = "en"                # Fissiamo l'inglese aeronautico: evita il langua
 BEAM_SIZE = 1                  # Greedy decoding: molto più veloce su CPU, perdita di accuratezza minima su frasi brevi/standardizzate come il gergo aeronautico
 
 # Prompt iniziale per condizionare l'IA sul gergo aeronautico ed evitare allucinazioni
-INITIAL_PROMPT = "Roger, Wilco, Tower, Approach, Radar, Information, Flight Level, Runway, Cleared, Maintain."
+INITIAL_PROMPT = (
+    "ATC radio transmission, aviation phraseology, pilot and tower control. "
+    "Aircraft callsigns, runway numbers, headings, flight levels, and altitudes. "
+    "Keywords: cleared to land, line up and wait, hold short, taxi via, squawk, "
+    "maintain, radar contact, wind, knots, QNH, altimeter, ILS approach, flight level. "
+    "Phonetic alphabet: Alfa, Bravo, Charlie, Delta, Echo, Foxtrot, Golf, Hotel, India, "
+    "Juliett, Kilo, Lima, Mike, November, Oscar, Papa, Quebec, Romeo, Sierra, Tango, "
+    "Uniform, Victor, Whiskey, X-ray, Yankee, Zulu. "
+    "Numbers and digits: zero, one, two, tree, four, fife, six, seven, eight, niner, hundred, thousand."
+)
 
 print("Caricamento del modello Faster-Whisper su CPU... (Attendi)")
 # Modello 'base': miglior compromesso accuratezza/velocità
