@@ -2,11 +2,10 @@ import json
 import os
 import collections
 import queue
+import sys
 import threading
-import time
 import io
 import wave
-import base64
 import numpy as np
 import pyaudio
 import webrtcvad
@@ -14,80 +13,90 @@ from faster_whisper import WhisperModel
 import requests
 
 
-CONFIG_FILE = "config.json"
+
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 def load_config():
-    """Carica la configurazione dal file JSON, con valori predefiniti se manca."""
-    default_config = {
-        "api": {
-            "groq": {
-                "api_key": "",
-                "model": "whisper-large-v3",
-                "url": "https://api.groq.com/openai/v1/audio/transcriptions"
-            }
-        },
-        "local": {
-            "model": "base",
-            "device": "cpu",
-            "compute_type": "int8"
-        },
-        "audio": {
-            "rate": 16000,
-            "channels": 1,
-            "frame_duration_ms": 30
-        },
-        "vad": {
-            "aggressiveness": 2,
-            "silence_timeout_s": 1.0,
-            "max_utterance_s": 15.0
-        },
-        "filter": {
-            "enabled": True,
-            "band_min": 300,
-            "band_max": 3400
+    print(f"[Config] Cerco file in: {CONFIG_PATH}")
+
+    if not os.path.exists(CONFIG_PATH):
+        print(f"\nERRORE: File {CONFIG_PATH} non trovato.")
+        print("Crea il file config.json nella stessa cartella di questo programma.")
+        print("Esempio di contenuto minimo:")
+        print("""
+{
+    "api": {
+        "groq": {
+            "api_key": "gsk_la_tua_chiave_qui"
         }
     }
+}
+        """)
+        sys.exit(1)
 
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            user_config = json.load(f)
-        # Fusione ricorsiva (sovrascrive le chiavi esistenti)
-        for key, value in user_config.items():
-            if isinstance(value, dict) and key in default_config:
-                default_config[key].update(value)
-            else:
-                default_config[key] = value
-    else:
-        print(f"[Config] File {CONFIG_FILE} non trovato. Uso valori predefiniti.")
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_config, f, indent=4)
-        print(f"[Config] Creato file {CONFIG_FILE} di esempio. Inserisci la tua chiave API.")
-    
-    return default_config
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    print("[Config] Caricato con successo.")
+    return config
+
+    """
+    Carica la configurazione dal file JSON.
+    Se il file non esiste, stampa un errore e termina.
+    """
+    CONFIG_FILE = "config.json"
+    print(f"[Config] Cerco file in: {CONFIG_FILE}")
+
+    if not os.path.exists(CONFIG_FILE):
+        print(f"\nERRORE: File {CONFIG_FILE} non trovato.")
+        print("Crea il file config.json nella stessa cartella di questo script.")
+        sys.exit(1)   # Termina senza creare file
+
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    print("[Config] Caricato con successo.")
+    return config
 
 config = load_config()
 
-# Estrai parametri
-API_KEY = config["api"]["groq"]["api_key"]
-GROQ_MODEL = config["api"]["groq"]["model"]
-GROQ_URL = config["api"]["groq"]["url"]
+# === Estrai parametri con get() ===
 
-LOCAL_MODEL = config["local"]["model"]
-LOCAL_DEVICE = config["local"]["device"]
-LOCAL_COMPUTE_TYPE = config["local"]["compute_type"]
+# API Groq
+API_KEY = config.get("api", {}).get("groq", {}).get("api_key", "")
+GROQ_MODEL = config.get("api", {}).get("groq", {}).get("model", "whisper-large-v3")
+GROQ_URL = config.get("api", {}).get("groq", {}).get("url", "https://api.groq.com/openai/v1/audio/transcriptions")
 
-RATE = config["audio"]["rate"]
-CHANNELS = config["audio"]["channels"]
-FRAME_DURATION_MS = config["audio"]["frame_duration_ms"]
-CHUNK = int(RATE * FRAME_DURATION_MS / 1000)
+# Modello locale (fallback)
+LOCAL_MODEL = config.get("local", {}).get("model", "base")
+LOCAL_DEVICE = config.get("local", {}).get("device", "cpu")
+LOCAL_COMPUTE_TYPE = config.get("local", {}).get("compute_type", "int8")
 
-VAD_AGGRESSIVENESS = config["vad"]["aggressiveness"]
-SILENCE_TIMEOUT_S = config["vad"]["silence_timeout_s"]
-MAX_UTTERANCE_S = config["vad"]["max_utterance_s"]
+# Audio
+RATE = config.get("audio", {}).get("rate", 16000)
+CHANNELS = config.get("audio", {}).get("channels", 1)
+FRAME_DURATION_MS = config.get("audio", {}).get("frame_duration_ms", 30)
+CHUNK = int(RATE * FRAME_DURATION_MS / 1000)  # Calcolato da RATE e FRAME_DURATION_MS
 
-APPLY_FILTER = config["filter"]["enabled"]
-FILTRO_BANDA_MIN = config["filter"]["band_min"]
-FILTRO_BANDA_MAX = config["filter"]["band_max"]
+# VAD (Voice Activity Detection)
+VAD_AGGRESSIVENESS = config.get("vad", {}).get("aggressiveness", 2)
+SILENCE_TIMEOUT_S = config.get("vad", {}).get("silence_timeout_s", 1.2)
+MAX_UTTERANCE_S = config.get("vad", {}).get("max_utterance_s", 20.0)
+
+# Filtro passa-banda (opzionale)
+APPLY_FILTER = config.get("filter", {}).get("enabled", False)
+FILTRO_BANDA_MIN = config.get("filter", {}).get("band_min", 300)
+FILTRO_BANDA_MAX = config.get("filter", {}).get("band_max", 3400)
+
+# Durata minima del segmento da trascrivere (in secondi)
+MIN_SEGMENT_DURATION_S = config.get("min_segment_duration_s", 1.2)
 
 # ====================================================================
 #  INIZIALIZZAZIONE
