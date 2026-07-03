@@ -8,6 +8,65 @@ SET-UP AMBIENTE
 3. Installa le dipendenze:      pip install -r requirements.txt
 
 
+
+-----------------------------
+FLUSSO LOGICO v2_api_version (Modulare)
+-----------------------------
+
+[Microfono / Radio]
+│
+▼ (Ogni 30ms)
+[AudioCapture] (audio.py)
+│   • Riceve i frame da PyAudio via callback
+│   • Li mette in una coda (audio_queue)
+│
+▼ (Loop Principale in main.py)
+[main.py]
+│   • Preleva frame da audio_queue
+│   • Li passa a VADProcessor
+│
+▼
+[VADProcessor] (vad.py)
+│   • Processa ogni frame con WebRTC VAD
+│   • Buffer circolare per i 300ms di pre‑roll
+│   • Rileva inizio/fine della voce
+│   • Quando rileva un segmento completo:
+│       • Calcola la durata
+│       • Se > min_segment_duration_s, lo invia al callback
+│
+▼ (Callback)
+[on_segment_ready()]
+│   • Riceve l'array audio (float32 normalizzato)
+│   • Lo passa a Transcriber.enqueue()
+│
+▼
+[Transcriber] (transcriber.py)
+│   • Accoda il segmento in transcribe_queue
+│   • Thread worker dedicato elabora in background:
+│
+│   ┌─────────────────────────────────┐
+│   │  THREAD WORKER                  │
+│   │  1. Preleva segmento dalla coda │
+│   │  2. Applica filtro (opzionale)  │
+│   │  3. Prova API Groq (primaria)   │
+│   │  4. Se fallisce → modello locale│
+│   │  5. Anti‑loop (evita ripetizioni)│
+│   │  6. Stampa il risultato         │
+│   └─────────────────────────────────┘
+│
+▼
+[OUTPUT] Trascrizione in tempo reale
+│   • Testo formattato (numeri convertiti in cifre)
+│   • Log separati da "---"
+│
+▼
+[FINE] Ctrl+C per terminare pulitamente
+│   • Stop stream audio
+│   • Termina thread worker
+│   • Rilascia risorse PyAudio
+
+
+
 -----------------------------
 FLUSSO LOGICO v1
 -----------------------------
