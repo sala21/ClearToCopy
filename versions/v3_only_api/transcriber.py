@@ -4,6 +4,7 @@ import queue
 import threading
 import time
 import requests
+from requests.adapters import HTTPAdapter
 from concurrent.futures import ThreadPoolExecutor
 
 from utils import audio_to_wav_bytes, audio_to_flac_bytes, apply_bandpass_filter, SOUNDFILE_AVAILABLE
@@ -61,6 +62,19 @@ class Transcriber:
         self.band_min = config.get("filter", {}).get("band_min", 300)
         self.band_max = config.get("filter", {}).get("band_max", 3400)
         self.rate = config.get("audio", {}).get("rate", 16000)
+
+        # Session condivisa: riusa le connessioni TCP/TLS gia' aperte verso
+        # Groq invece di rifare l'handshake ad ogni singola richiesta. Il
+        # pool e' dimensionato sul numero di worker paralleli, cosi' ognuno
+        # puo' avere la propria connessione mantenuta viva (keep-alive).
+        self.session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=max_concurrent_requests,
+            pool_maxsize=max_concurrent_requests,
+        )
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+        self.session.headers.update({"Authorization": f"Bearer {self.api_key}"})
 
         self.transcribe_queue = queue.Queue()
         self.stop_event = threading.Event()
@@ -213,12 +227,11 @@ class Transcriber:
             "response_format": "json",
             "prompt": INITIAL_PROMPT,
         }
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-
+        # L'header Authorization e' gia' impostato una volta sulla session
+        # (self.session.headers), non va ricostruito ad ogni chiamata.
         try:
-            resp = requests.post(
+            resp = self.session.post(
                 self.groq_url,
-                headers=headers,
                 files=files,
                 data=data,
                 timeout=self.groq_timeout_s,
@@ -245,3 +258,5 @@ class Transcriber:
         with self._result_lock:
             self._result_lock.notify_all()
         self.printer_thread.join(timeout=self.reorder_timeout_s + 1.0)
+
+        self.session.close()
