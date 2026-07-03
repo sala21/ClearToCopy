@@ -3,19 +3,21 @@ import itertools
 import queue
 import threading
 import time
+import numpy as np
 import requests
 from requests.adapters import HTTPAdapter
 from concurrent.futures import ThreadPoolExecutor
 
-from utils import audio_to_wav_bytes, audio_to_flac_bytes, apply_bandpass_filter, SOUNDFILE_AVAILABLE
+from utils import audio_to_wav_bytes, audio_to_flac_bytes, SOUNDFILE_AVAILABLE
+from logger import get_logger
 
-"""Trascrizione via API Groq (whisper-large-v3). Nessun fallback locale.
+logger = get_logger()
 
-I segmenti vengono trascritti in parallelo (ThreadPoolExecutor), ma stampati
-in ordine cronologico tramite un min-heap: ogni segmento riceve un numero di
-sequenza all'ingresso, e un thread dedicato stampa solo quando il segmento
-"atteso" e' pronto, riordinando eventuali risultati arrivati fuori sequenza.
-"""
+try:
+    from scipy import signal
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
 
 INITIAL_PROMPT = (
     "ATC radio transmission, aviation phraseology, pilot and tower control. "
@@ -31,6 +33,7 @@ INITIAL_PROMPT = (
 
 class Transcriber:
     def __init__(self, config):
+        logger.debug("Inizializzazione Transcriber...")
         groq_cfg = config.get("api", {}).get("groq", {})
         self.api_key = groq_cfg.get("api_key", "")
         if not self.api_key:
@@ -44,29 +47,26 @@ class Transcriber:
         self.groq_url = groq_cfg.get("url", "https://api.groq.com/openai/v1/audio/transcriptions")
         self.groq_timeout_s = groq_cfg.get("timeout_s", 10)
         max_concurrent_requests = groq_cfg.get("max_concurrent_requests", 3)
-
-        # Se un segmento atteso in ordine non arriva entro questo tempo (perso,
-        # errore, timeout Groq), il printer salta avanti invece di bloccarsi
-        # per sempre in attesa di un risultato che non arrivera' mai.
         self.reorder_timeout_s = groq_cfg.get("reorder_timeout_s", 3.0)
 
-        # FLAC riduce le dimensioni del payload rispetto al WAV grezzo, quindi
-        # upload piu' veloce verso Groq. Se 'soundfile' non e' installato,
-        # si fa fallback automatico a WAV con un avviso a schermo (una volta sola).
         self.use_flac = groq_cfg.get("use_flac", True) and SOUNDFILE_AVAILABLE
         if groq_cfg.get("use_flac", True) and not SOUNDFILE_AVAILABLE:
-            print("[Transcriber] 'soundfile' non installato: uso WAV invece di FLAC "
-                  "(pip install soundfile per upload piu' veloci).")
+            logger.warning("'soundfile' non installato: uso WAV invece di FLAC (pip install soundfile per upload più veloci).")
 
         self.apply_filter = config.get("filter", {}).get("enabled", False)
         self.band_min = config.get("filter", {}).get("band_min", 300)
         self.band_max = config.get("filter", {}).get("band_max", 3400)
         self.rate = config.get("audio", {}).get("rate", 16000)
 
-        # Session condivisa: riusa le connessioni TCP/TLS gia' aperte verso
-        # Groq invece di rifare l'handshake ad ogni singola richiesta. Il
-        # pool e' dimensionato sul numero di worker paralleli, cosi' ognuno
-        # puo' avere la propria connessione mantenuta viva (keep-alive).
+        if self.apply_filter:
+            if not SCIPY_AVAILABLE:
+                logger.warning("scipy non installato: filtro disabilitato. Installa con: pip install scipy")
+                self.apply_filter = False
+            else:
+                self._filter_b = signal.firwin(65, [self.band_min, self.band_max], fs=self.rate, pass_zero=False)
+                self._filter_a = [1.0]
+                logger.info("Filtro passa-banda pre-calcolato (%d-%d Hz).", self.band_min, self.band_max)
+
         self.session = requests.Session()
         adapter = HTTPAdapter(
             pool_connections=max_concurrent_requests,
@@ -83,75 +83,87 @@ class Transcriber:
         self.last_text_time = 0
         self._last_text_lock = threading.Lock()
 
-        # Numero di sequenza crescente assegnato a ogni segmento all'ingresso,
-        # usato per riordinare i risultati in uscita.
         self._seq_counter = itertools.count()
         self._next_seq_to_print = 0
-        self._result_heap = []  # elementi: (seq, text_o_None, timestamp_arrivo)
+        self._result_heap = []
         self._result_lock = threading.Condition()
 
-        # Pool di worker: piu' richieste Groq possono essere "in volo"
-        # contemporaneamente invece di accodarsi una dietro l'altra.
         self.executor = ThreadPoolExecutor(
             max_workers=max_concurrent_requests,
             thread_name_prefix="GroqWorker",
         )
 
-        # Thread leggero che smista i segmenti pronti al pool, senza mai bloccarsi
-        # in attesa della risposta di Groq.
+        # Metriche
+        self.metrics = {
+            "segments_submitted": 0,
+            "segments_completed": 0,
+            "segments_failed": 0,
+            "total_response_time": 0.0,
+            "last_log_time": time.time()
+        }
+        self.metrics_lock = threading.Lock()
+
         self.dispatch_thread = threading.Thread(target=self._dispatch_loop, daemon=True)
         self.dispatch_thread.start()
 
-        # Thread che stampa i risultati nell'ordine cronologico corretto,
-        # anche se i worker Groq finiscono fuori sequenza.
         self.printer_thread = threading.Thread(target=self._printer_loop, daemon=True)
         self.printer_thread.start()
 
-        print(f"[Transcriber] Pronto. Modello Groq: {self.groq_model} "
-              f"(max {max_concurrent_requests} richieste in parallelo, "
-              f"formato: {'FLAC' if self.use_flac else 'WAV'}).")
+        self.metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
+        self.metrics_thread.start()
 
-    def enqueue(self, audio_np):
-        """Aggiunge un segmento audio alla coda di trascrizione (non bloccante)."""
+        logger.info("Pronto. Modello Groq: %s (max %d richieste in parallelo, formato: %s)",
+                    self.groq_model, max_concurrent_requests, 'FLAC' if self.use_flac else 'WAV')
+
+    def enqueue(self, audio):
         seq = next(self._seq_counter)
-        self.transcribe_queue.put((seq, audio_np))
+        self.transcribe_queue.put((seq, audio))
+        with self.metrics_lock:
+            self.metrics["segments_submitted"] += 1
+        logger.debug("Segmento accodato: seq=%d, dimensione=%d", seq, len(audio))
 
     def _dispatch_loop(self):
-        """Preleva i segmenti e li smista al pool di worker Groq."""
         while not self.stop_event.is_set():
             try:
                 item = self.transcribe_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-
             if item is None:
                 break
+            seq, audio = item
+            logger.debug("Dispatcher: invio segmento seq=%d al worker.", seq)
+            self.executor.submit(self._process_segment, seq, audio)
+        logger.debug("Dispatcher terminato.")
 
-            seq, audio_np = item
-            self.executor.submit(self._process_segment, seq, audio_np)
+    def _process_segment(self, seq, audio):
+        start_time = time.time()
+        logger.debug("Processamento segmento seq=%d iniziato.", seq)
 
-        print("[Transcriber] Dispatcher terminato.")
-
-    def _process_segment(self, seq, audio_np):
-        """Eseguito nel pool: pre-processing + chiamata Groq + invio al printer."""
         if self.apply_filter:
-            audio_np = apply_bandpass_filter(
-                audio_np,
-                rate=self.rate,
-                band_min=self.band_min,
-                band_max=self.band_max,
-            )
+            if audio.dtype == np.int16:
+                audio_float = audio.astype(np.float32) / 32768.0
+            else:
+                audio_float = audio.astype(np.float32)
+            audio_filtered = signal.lfilter(self._filter_b, self._filter_a, audio_float)
+            text = self._transcribe_with_groq(audio_filtered)
+        else:
+            text = self._transcribe_with_groq(audio)
 
-        text = self._transcribe_with_groq(audio_np)
+        elapsed = time.time() - start_time
+        with self.metrics_lock:
+            if text is not None:
+                self.metrics["segments_completed"] += 1
+                self.metrics["total_response_time"] += elapsed
+                logger.debug("Segmento seq=%d completato in %.2fs.", seq, elapsed)
+            else:
+                self.metrics["segments_failed"] += 1
+                logger.warning("Segmento seq=%d fallito (timeout o errore Groq).", seq)
 
-        # Anti-loop: scarta ripetizioni brevi identiche (es. rumore che genera
-        # sempre la stessa parola breve). La sequenza mantiene comunque il suo
-        # "slot" nell'ordine, altrimenti il printer resterebbe bloccato ad
-        # aspettarla.
         if text:
             with self._last_text_lock:
                 if text == self.last_text and len(text) < 15:
                     text = None
+                    logger.debug("Segmento seq=%d scartato (ripetizione breve).", seq)
                 else:
                     self.last_text = text
                     self.last_text_time = time.time()
@@ -159,40 +171,33 @@ class Transcriber:
         self._submit_result(seq, text)
 
     def _submit_result(self, seq, text):
-        """Inserisce un risultato nel min-heap e sveglia il thread di stampa."""
         with self._result_lock:
             heapq.heappush(self._result_heap, (seq, text, time.time()))
             self._result_lock.notify_all()
 
     def _printer_loop(self):
-        """Stampa i risultati in ordine di sequenza, riordinando se necessario."""
         while not self.stop_event.is_set():
             with self._result_lock:
                 if not self._result_heap:
                     self._result_lock.wait(timeout=0.5)
                     continue
-
                 seq, text, arrived_at = self._result_heap[0]
-
                 if seq == self._next_seq_to_print:
                     heapq.heappop(self._result_heap)
                     self._next_seq_to_print += 1
+                    logger.debug("Printer: stampato segmento seq=%d", seq)
                 elif (time.time() - arrived_at) > self.reorder_timeout_s:
-                    # Il segmento atteso non e' mai arrivato: probabilmente
-                    # perso o fallito. Salta avanti per non bloccare l'output
-                    # all'infinito.
                     heapq.heappop(self._result_heap)
                     self._next_seq_to_print = seq + 1
+                    logger.warning("Printer: timeout per seq=%d, salto avanti.", seq)
                 else:
                     self._result_lock.wait(timeout=self.reorder_timeout_s)
                     continue
-
             self._print_result(text)
 
         self._flush_remaining_results()
 
     def _flush_remaining_results(self):
-        """Stampa in ordine tutto cio' che resta nell'heap allo shutdown."""
         with self._result_lock:
             remaining = sorted(self._result_heap)
             self._result_heap.clear()
@@ -206,18 +211,45 @@ class Transcriber:
             print("[Transcriber] Nessun testo riconosciuto.")
         print("-" * 40)
 
-    def _transcribe_with_groq(self, audio_np):
-        """Invia l'audio all'API Groq. Ritorna None in caso di errore o timeout."""
+    def _metrics_loop(self):
+        """
+        Stampa metriche di riepilogo ogni 10 secondi.
+        Inoltre, se il debug è attivo, stampa la dimensione della coda ogni 2 secondi.
+        """
+        last_queue_log = time.time()
+        while not self.stop_event.is_set():
+            time.sleep(1)  # Controllo ogni secondo per maggiore precisione
+
+            # === METRICHE COMPLETE OGNI 10 SECONDI ===
+            if time.time() - self.metrics["last_log_time"] >= 10:
+                with self.metrics_lock:
+                    submitted = self.metrics["segments_submitted"]
+                    completed = self.metrics["segments_completed"]
+                    failed = self.metrics["segments_failed"]
+                    avg_time = (self.metrics["total_response_time"] / completed) if completed > 0 else 0.0
+                    queue_size = self.transcribe_queue.qsize()
+                    self.metrics["last_log_time"] = time.time()
+                logger.info("📊 Metriche: inviati=%d, completati=%d, falliti=%d, coda=%d, tempo_medio=%.2fs",
+                            submitted, completed, failed, queue_size, avg_time)
+
+            # === MONITORAGGIO VELOCE DELLA CODA (ogni 2 secondi, solo in DEBUG) ===
+            if time.time() - last_queue_log >= 2:
+                last_queue_log = time.time()
+                queue_size = self.transcribe_queue.qsize()
+                # Usa logger.debug per mostrarlo solo se il debug è attivo
+                logger.debug("📋 Coda attuale: %d segmenti in attesa.", queue_size)
+
+    def _transcribe_with_groq(self, audio):
         if self.use_flac:
             try:
-                audio_bytes = audio_to_flac_bytes(audio_np, rate=self.rate)
+                audio_bytes = audio_to_flac_bytes(audio, rate=self.rate)
                 filename, content_type = "audio.flac", "audio/flac"
             except Exception as e:
-                print(f"[Transcriber] Encoding FLAC fallito ({e}), uso WAV per questo segmento.")
-                audio_bytes = audio_to_wav_bytes(audio_np, rate=self.rate)
+                logger.error("Encoding FLAC fallito (%s), uso WAV per questo segmento.", e)
+                audio_bytes = audio_to_wav_bytes(audio, rate=self.rate)
                 filename, content_type = "audio.wav", "audio/wav"
         else:
-            audio_bytes = audio_to_wav_bytes(audio_np, rate=self.rate)
+            audio_bytes = audio_to_wav_bytes(audio, rate=self.rate)
             filename, content_type = "audio.wav", "audio/wav"
 
         files = {"file": (filename, audio_bytes, content_type)}
@@ -227,9 +259,9 @@ class Transcriber:
             "response_format": "json",
             "prompt": INITIAL_PROMPT,
         }
-        # L'header Authorization e' gia' impostato una volta sulla session
-        # (self.session.headers), non va ricostruito ad ogni chiamata.
+
         try:
+            logger.debug("Invio richiesta a Groq: %s", filename)
             resp = self.session.post(
                 self.groq_url,
                 files=files,
@@ -237,26 +269,27 @@ class Transcriber:
                 timeout=self.groq_timeout_s,
             )
             if resp.status_code != 200:
-                print(f"[Groq] Errore HTTP {resp.status_code}: {resp.text[:200]}")
+                logger.error("Errore HTTP %d: %s", resp.status_code, resp.text[:200])
                 return None
             text = resp.json().get("text", "").strip()
+            logger.debug("Risposta Groq ricevuta: %d caratteri", len(text) if text else 0)
             return text if text else None
         except requests.exceptions.Timeout:
-            print(f"[Groq] Timeout dopo {self.groq_timeout_s}s - segmento perso.")
+            logger.error("Timeout dopo %ds - segmento perso.", self.groq_timeout_s)
             return None
         except Exception as e:
-            print(f"[Groq] Errore: {e}")
+            logger.error("Errore: %s", e)
             return None
 
     def stop(self):
-        """Termina dispatcher, worker pool e printer in modo pulito."""
+        logger.info("Arresto Transcriber in corso...")
         self.stop_event.set()
         self.transcribe_queue.put(None)
         self.dispatch_thread.join(timeout=3.0)
         self.executor.shutdown(wait=True)
-
         with self._result_lock:
             self._result_lock.notify_all()
         self.printer_thread.join(timeout=self.reorder_timeout_s + 1.0)
-
+        self.metrics_thread.join(timeout=1.0)
         self.session.close()
+        logger.info("Transcriber fermato.")

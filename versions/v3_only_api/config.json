@@ -4,7 +4,7 @@
             "model": "whisper-large-v3",
             "url": "https://api.groq.com/openai/v1/audio/transcriptions",
             "timeout_s": 10,
-            "max_concurrent_requests": 3,
+            "max_concurrent_requests": 5,
             "reorder_timeout_s": 3.0,
             "use_flac": true
         }
@@ -24,5 +24,10 @@
         "enabled": true,
         "band_min": 300,
         "band_max": 3400
+    },
+    "debug": {
+        "enabled": false,           
+        "log_to_file": true,        
+        "console_level": "INFO"   
     }
 }

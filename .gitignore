@@ -1,14 +1,52 @@
-# Ignora l'ambiente virtuale di Python
+# ==========================================
+# Ambiente virtuale
+# ==========================================
 venv/
+env/
+.venv/
 
-# Ignora i file di cache temporanei che Python crea da solo
+# ==========================================
+# File di cache e compilazione Python
+# ==========================================
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.so
 
-# Usi VS Code, puoi ignorare anche la sua cartella di configurazione (opzionale)
+# ==========================================
+# File di log (contengono dati sensibili!)
+# ==========================================
+*.log
+transcriber.log
+
+
+# ==========================================
+# IDE e editor
+# ==========================================
 .vscode/
+.idea/
+*.swp
+*.swo
 
-# PyInstaller (Output di compilazione)
+# ==========================================
+# Build e distribuzione (PyInstaller)
+# ==========================================
 build/
 dist/
 *.spec
+
+# ==========================================
+# File di database e dati locali
+# ==========================================
+*.db
+*.sqlite3
+*.sqlite
+data/
+
+# ==========================================
+# File di sistema e temporanei
+# ==========================================
+.DS_Store
+Thumbs.db
+*.tmp
