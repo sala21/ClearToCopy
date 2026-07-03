@@ -1,0 +1,26 @@
+{
+    "api": {
+        "groq": {
+            "model": "whisper-large-v3",
+            "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+            "timeout_s": 10,
+            "max_concurrent_requests": 3
+        }
+    },
+    "audio": {
+        "rate": 16000,
+        "channels": 1,
+        "frame_duration_ms": 30
+    },
+    "vad": {
+        "aggressiveness": 2,
+        "silence_timeout_s": 1.0,
+        "max_utterance_s": 15.0,
+        "min_segment_duration_s": 0.6
+    },
+    "filter": {
+        "enabled": true,
+        "band_min": 300,
+        "band_max": 3400
+    }
+}
