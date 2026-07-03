@@ -19,16 +19,7 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
 
-INITIAL_PROMPT = (
-    "ATC radio transmission, aviation phraseology, pilot and tower control. "
-    "Aircraft callsigns, runway numbers, headings, flight levels, and altitudes. "
-    "Keywords: cleared to land, line up and wait, hold short, taxi via, squawk, "
-    "maintain, radar contact, wind, knots, QNH, altimeter, ILS approach, flight level. "
-    "Phonetic alphabet: Alfa, Bravo, Charlie, Delta, Echo, Foxtrot, Golf, Hotel, India, "
-    "Juliett, Kilo, Lima, Mike, November, Oscar, Papa, Quebec, Romeo, Sierra, Tango, "
-    "Uniform, Victor, Whiskey, X-ray, Yankee, Zulu. "
-    "Numbers and digits: zero, one, two, tree, four, fife, six, seven, eight, niner, hundred, thousand."
-)
+INITIAL_PROMPT = "Transcription of aviation radio communication."
 
 
 class Transcriber:

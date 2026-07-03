@@ -15,7 +15,8 @@ class VADProcessor:
         aggressiveness=2,
         silence_timeout_s=1.2,
         max_utterance_s=20.0,
-        min_segment_duration_s=1.2
+        min_segment_duration_s=1.2,
+        activation_ratio=0.6  # Nuovo parametro con default 0.6
     ):
         self.rate = rate
         self.frame_duration_ms = frame_duration_ms
@@ -23,6 +24,7 @@ class VADProcessor:
         self.silence_timeout_s = silence_timeout_s
         self.max_utterance_s = max_utterance_s
         self.min_segment_duration_s = min_segment_duration_s
+        self.activation_ratio = activation_ratio  # <--- PUNTO 2
 
         self.triggered = False
         num_padding_frames = int(300 / frame_duration_ms)
@@ -38,7 +40,8 @@ class VADProcessor:
         self._voiced_frame_count = 0
 
         self.on_transcription_ready = None
-        logger.debug("VAD inizializzato: rate=%d, aggressiveness=%d", rate, aggressiveness)
+        logger.debug("VAD inizializzato: rate=%d, aggressiveness=%d, activation_ratio=%.2f", 
+                     rate, aggressiveness, activation_ratio)
 
     def set_callback(self, callback):
         self.on_transcription_ready = callback
@@ -65,7 +68,8 @@ class VADProcessor:
         if not self.triggered:
             self.ring_buffer.append((frame, is_speech))
             num_voiced = sum(1 for _, speech in self.ring_buffer if speech)
-            if num_voiced > 0.6 * self.ring_buffer.maxlen:
+            # <--- PUNTO 2: usa activation_ratio invece di 0.6 fisso
+            if num_voiced > self.activation_ratio * self.ring_buffer.maxlen:
                 self.triggered = True
                 logger.debug("VAD attivato (inizio parlato).")
                 for f, _ in self.ring_buffer:
@@ -97,6 +101,11 @@ class VADProcessor:
         audio_int16 = self._voiced_buffer[:self._voiced_write_pos].copy()
         self._voiced_write_pos = 0
         self._voiced_frame_count = 0
+
+        # <--- PUNTO 3: NORMALIZZAZIONE DEL PICCO (alza il volume)
+        max_val = np.max(np.abs(audio_int16))
+        if max_val > 0:
+            audio_int16 = (audio_int16 / max_val * 0.9 * 32767).astype(np.int16)
 
         duration = len(audio_int16) / self.rate
         if duration < self.min_segment_duration_s:
