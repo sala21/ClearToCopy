@@ -5,7 +5,8 @@
             "url": "https://api.groq.com/openai/v1/audio/transcriptions",
             "timeout_s": 10,
             "max_concurrent_requests": 3,
-            "reorder_timeout_s": 3.0
+            "reorder_timeout_s": 3.0,
+            "use_flac": true
         }
     },
     "audio": {

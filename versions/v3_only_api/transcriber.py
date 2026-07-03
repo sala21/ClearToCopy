@@ -6,7 +6,7 @@ import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
-from utils import audio_to_wav_bytes, apply_bandpass_filter
+from utils import audio_to_wav_bytes, audio_to_flac_bytes, apply_bandpass_filter, SOUNDFILE_AVAILABLE
 
 """Trascrizione via API Groq (whisper-large-v3). Nessun fallback locale.
 
@@ -49,6 +49,14 @@ class Transcriber:
         # per sempre in attesa di un risultato che non arrivera' mai.
         self.reorder_timeout_s = groq_cfg.get("reorder_timeout_s", 3.0)
 
+        # FLAC riduce le dimensioni del payload rispetto al WAV grezzo, quindi
+        # upload piu' veloce verso Groq. Se 'soundfile' non e' installato,
+        # si fa fallback automatico a WAV con un avviso a schermo (una volta sola).
+        self.use_flac = groq_cfg.get("use_flac", True) and SOUNDFILE_AVAILABLE
+        if groq_cfg.get("use_flac", True) and not SOUNDFILE_AVAILABLE:
+            print("[Transcriber] 'soundfile' non installato: uso WAV invece di FLAC "
+                  "(pip install soundfile per upload piu' veloci).")
+
         self.apply_filter = config.get("filter", {}).get("enabled", False)
         self.band_min = config.get("filter", {}).get("band_min", 300)
         self.band_max = config.get("filter", {}).get("band_max", 3400)
@@ -86,7 +94,8 @@ class Transcriber:
         self.printer_thread.start()
 
         print(f"[Transcriber] Pronto. Modello Groq: {self.groq_model} "
-              f"(max {max_concurrent_requests} richieste in parallelo).")
+              f"(max {max_concurrent_requests} richieste in parallelo, "
+              f"formato: {'FLAC' if self.use_flac else 'WAV'}).")
 
     def enqueue(self, audio_np):
         """Aggiunge un segmento audio alla coda di trascrizione (non bloccante)."""
@@ -185,8 +194,19 @@ class Transcriber:
 
     def _transcribe_with_groq(self, audio_np):
         """Invia l'audio all'API Groq. Ritorna None in caso di errore o timeout."""
-        wav_bytes = audio_to_wav_bytes(audio_np, rate=self.rate)
-        files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
+        if self.use_flac:
+            try:
+                audio_bytes = audio_to_flac_bytes(audio_np, rate=self.rate)
+                filename, content_type = "audio.flac", "audio/flac"
+            except Exception as e:
+                print(f"[Transcriber] Encoding FLAC fallito ({e}), uso WAV per questo segmento.")
+                audio_bytes = audio_to_wav_bytes(audio_np, rate=self.rate)
+                filename, content_type = "audio.wav", "audio/wav"
+        else:
+            audio_bytes = audio_to_wav_bytes(audio_np, rate=self.rate)
+            filename, content_type = "audio.wav", "audio/wav"
+
+        files = {"file": (filename, audio_bytes, content_type)}
         data = {
             "model": self.groq_model,
             "language": "en",
