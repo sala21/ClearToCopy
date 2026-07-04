@@ -1,7 +1,7 @@
 {
     "api": {
         "groq": {
-            "model": "whisper-large-v3",
+            "model": "whisper-large-v3-turbo",
             "url": "https://api.groq.com/openai/v1/audio/transcriptions",
             "timeout_s": 10,
             "max_concurrent_requests": 5,

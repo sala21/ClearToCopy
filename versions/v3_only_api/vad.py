@@ -6,7 +6,7 @@ from logger import get_logger
 logger = get_logger()
 
 class VADProcessor:
-    """Voice Activity Detection e segmentazione"""
+    """Voice Activity Detection e segmentazione con sliding window O(1)"""
 
     def __init__(
         self,
@@ -16,7 +16,7 @@ class VADProcessor:
         silence_timeout_s=1.2,
         max_utterance_s=20.0,
         min_segment_duration_s=1.2,
-        activation_ratio=0.6  # Nuovo parametro con default 0.6
+        activation_ratio=0.6
     ):
         self.rate = rate
         self.frame_duration_ms = frame_duration_ms
@@ -24,13 +24,22 @@ class VADProcessor:
         self.silence_timeout_s = silence_timeout_s
         self.max_utterance_s = max_utterance_s
         self.min_segment_duration_s = min_segment_duration_s
-        self.activation_ratio = activation_ratio  # <--- PUNTO 2
+        self.activation_ratio = activation_ratio
 
         self.triggered = False
+
+        # Finestra per il preroll (300ms) e contatore di frame con voce
         num_padding_frames = int(300 / frame_duration_ms)
-        self.ring_buffer = collections.deque(maxlen=num_padding_frames)
+        self.ring_buffer_maxlen = num_padding_frames
+        self.ring_buffer = collections.deque()  # senza maxlen, gestiamo noi
+        self._voiced_count = 0
+
+        # Finestra per il silenzio durante il parlato
         num_silence_frames = int(silence_timeout_s * 1000 / frame_duration_ms)
-        self.ring_buffer_silence = collections.deque(maxlen=num_silence_frames)
+        self.silence_ring_maxlen = num_silence_frames
+        self.ring_buffer_silence = collections.deque()
+        self._unvoiced_count = 0
+
         self.max_voiced_frames = int(max_utterance_s * 1000 / frame_duration_ms)
 
         self.frame_samples = int(rate * frame_duration_ms / 1000)
@@ -40,7 +49,7 @@ class VADProcessor:
         self._voiced_frame_count = 0
 
         self.on_transcription_ready = None
-        logger.debug("VAD inizializzato: rate=%d, aggressiveness=%d, activation_ratio=%.2f", 
+        logger.debug("VAD inizializzato: rate=%d, aggressiveness=%d, activation_ratio=%.2f",
                      rate, aggressiveness, activation_ratio)
 
     def set_callback(self, callback):
@@ -66,20 +75,43 @@ class VADProcessor:
         segment_completed = False
 
         if not self.triggered:
+            # --- Finestra di preroll (300ms) con contatore O(1) ---
+            # Rimuovi il frame più vecchio se la finestra è piena
+            if len(self.ring_buffer) == self.ring_buffer_maxlen:
+                _, old_is_speech = self.ring_buffer.popleft()
+                if old_is_speech:
+                    self._voiced_count -= 1
+
+            # Aggiungi il nuovo frame
             self.ring_buffer.append((frame, is_speech))
-            num_voiced = sum(1 for _, speech in self.ring_buffer if speech)
-            # <--- PUNTO 2: usa activation_ratio invece di 0.6 fisso
-            if num_voiced > self.activation_ratio * self.ring_buffer.maxlen:
+            if is_speech:
+                self._voiced_count += 1
+
+            # Controllo attivazione
+            if self._voiced_count > self.activation_ratio * self.ring_buffer_maxlen:
                 self.triggered = True
                 logger.debug("VAD attivato (inizio parlato).")
+                # Svuota il buffer nel buffer vocale
                 for f, _ in self.ring_buffer:
                     self._append_voiced_frame(f)
                 self.ring_buffer.clear()
+                self._voiced_count = 0
         else:
+            # --- Modalità parlato attivo ---
             self._append_voiced_frame(frame)
-            self.ring_buffer_silence.append(is_speech)
-            num_unvoiced = sum(1 for speech in self.ring_buffer_silence if not speech)
-            end_of_transmission = num_unvoiced == self.ring_buffer_silence.maxlen
+
+            # Aggiorna finestra di silenzio con contatore O(1)
+            if len(self.ring_buffer_silence) == self.silence_ring_maxlen:
+                _, old_is_speech = self.ring_buffer_silence.popleft()
+                if not old_is_speech:
+                    self._unvoiced_count -= 1
+
+            self.ring_buffer_silence.append((frame, is_speech))
+            if not is_speech:
+                self._unvoiced_count += 1
+
+            # Controllo fine parlato o taglio forzato
+            end_of_transmission = (self._unvoiced_count == self.silence_ring_maxlen)
             forced_cutoff = self._voiced_frame_count >= self.max_voiced_frames
 
             if end_of_transmission or forced_cutoff:
@@ -88,6 +120,9 @@ class VADProcessor:
                 if forced_cutoff and not end_of_transmission:
                     logger.debug("VAD: taglio forzato per durata massima.")
                     self.triggered = True
+                    # Resetta il buffer di silenzio per il prossimo segmento
+                    self.ring_buffer_silence.clear()
+                    self._unvoiced_count = 0
                 else:
                     logger.debug("VAD: fine parlato.")
                     self.triggered = False
@@ -102,7 +137,7 @@ class VADProcessor:
         self._voiced_write_pos = 0
         self._voiced_frame_count = 0
 
-        # <--- PUNTO 3: NORMALIZZAZIONE DEL PICCO (alza il volume)
+        # Normalizzazione del picco (AGC)
         max_val = np.max(np.abs(audio_int16))
         if max_val > 0:
             audio_int16 = (audio_int16 / max_val * 0.9 * 32767).astype(np.int16)
@@ -111,6 +146,7 @@ class VADProcessor:
         if duration < self.min_segment_duration_s:
             logger.warning("Segmento troppo breve (%.2fs) – scartato.", duration)
             self.ring_buffer_silence.clear()
+            self._unvoiced_count = 0
             return
 
         logger.debug("Segmento VAD pronto: durata=%.2fs, campioni=%d", duration, len(audio_int16))
@@ -118,3 +154,4 @@ class VADProcessor:
             self.on_transcription_ready(audio_int16)
 
         self.ring_buffer_silence.clear()
+        self._unvoiced_count = 0

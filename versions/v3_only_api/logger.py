@@ -44,7 +44,7 @@ logger.addHandler(console_handler)
 
 # --- Handler per il file (opzionale) ---
 if debug_config.get("log_to_file", True):
-    file_handler = logging.FileHandler("transcriber.log", encoding="utf-8")
+    file_handler = logging.FileHandler("transcriber.log", mode='w', encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)  # Il file registra SEMPRE tutto
     file_formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -61,6 +61,6 @@ def get_logger():
 
 # Stampa un messaggio iniziale per confermare la modalità
 if debug_config.get("enabled", False):
-    logger.debug("🐞 MODALITÀ DEBUG ATTIVA - Tutti i messaggi sono visibili a schermo.")
+    logger.debug("MODALITÀ DEBUG ATTIVA - Tutti i messaggi sono visibili a schermo.")
 else:
     logger.info("Modalità normale (debug disattivato). Per attivarlo, imposta 'enabled': true in config.json")

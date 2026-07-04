@@ -36,6 +36,7 @@ INITIAL_PROMPT = (
 
 
 class Transcriber:
+    
     def __init__(self, config):
         logger.debug("Inizializzazione Transcriber...")
         groq_cfg = config.get("api", {}).get("groq", {})
@@ -243,7 +244,7 @@ class Transcriber:
                     avg_time = (self.metrics["total_response_time"] / completed) if completed > 0 else 0.0
                     queue_size = self.transcribe_queue.qsize()
                     self.metrics["last_log_time"] = time.time()
-                logger.info("📊 Metriche: inviati=%d, completati=%d, falliti=%d, coda=%d, tempo_medio=%.2fs",
+                logger.debug("📊 Metriche: inviati=%d, completati=%d, falliti=%d, coda=%d, tempo_medio=%.2fs",
                             submitted, completed, failed, queue_size, avg_time)
 
             # === MONITORAGGIO VELOCE DELLA CODA (ogni 2 secondi, solo in DEBUG) ===

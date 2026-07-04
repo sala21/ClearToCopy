@@ -81,7 +81,7 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
     write_pos = 0
 
     logger.info(
-        "📻 Modalità RADIO attivata: bypass VAD, segmenti di %.1fs, overlap %.1fs, gate silenzio %s",
+        "Modalità RADIO attivata: bypass VAD, segmenti di %.1fs, overlap %.1fs, gate silenzio %s",
         segment_duration_s, overlap_s, "ON" if silence_gate_enabled else "OFF"
     )
     print("\n=== ASCOLTO RADIO (con preprocessing) ===")

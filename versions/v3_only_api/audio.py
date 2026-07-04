@@ -2,6 +2,7 @@ import queue
 import pyaudio
 
 class AudioCapture:
+    
     def __init__(self, rate=16000, channels=1, chunk=480, max_queue_size=200):
         self.rate = rate
         self.channels = channels
