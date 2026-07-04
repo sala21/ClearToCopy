@@ -13,16 +13,25 @@ def _ensure_int16(audio):
     """
     Converte l'input in un array int16 se necessario.
     - Se è già int16, lo restituisce tale e quale.
-    - Se è float32, lo normalizza in int16.
-    - Se è altro, tenta di convertire.
+    - Se è float32 (o altro tipo float), lo clippa a [-1, 1] e lo scala in int16.
+
+    Il clip prima della conversione è fondamentale: un filtro FIR (es. il
+    passa-banda in transcriber.py) può produrre overshoot anche su audio già
+    normalizzato (ripple del filtro), con valori leggermente oltre ±1.0.
+    Senza clip, .astype(np.int16) su un valore fuori range non arrotonda né
+    satura: fa wraparound (es. 1.05 -> 34405 -> interpretato come -31131),
+    producendo un click/scoppio udibile e imprevedibile nell'audio inviato
+    a Groq.
     """
     if audio.dtype == np.int16:
         return audio
-    elif audio.dtype == np.float32:
-        return (audio * 32767).astype(np.int16)
+    elif audio.dtype == np.float32 or audio.dtype == np.float64:
+        clipped = np.clip(audio, -1.0, 1.0)
+        return (clipped * 32767).astype(np.int16)
     else:
-        # Fallback generico
-        return (audio.astype(np.float32) * 32767).astype(np.int16)
+        # Fallback generico per altri tipi: converte in float, clippa, scala.
+        clipped = np.clip(audio.astype(np.float32), -1.0, 1.0)
+        return (clipped * 32767).astype(np.int16)
 
 
 def audio_to_wav_bytes(audio, rate=16000):

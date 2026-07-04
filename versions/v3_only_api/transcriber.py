@@ -19,7 +19,20 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
 
-INITIAL_PROMPT = "Transcription of aviation radio communication."
+# Prompt dettagliato: orienta Whisper su fraseologia, callsign e terminologia
+# ATC. Un prompt generico ("Transcription of aviation radio communication.")
+# perde gran parte di questo aiuto sui termini tecnici e sull'alfabeto
+# fonetico, quindi teniamolo esteso.
+INITIAL_PROMPT = (
+    "ATC radio transmission, aviation phraseology, pilot and tower control. "
+    "Aircraft callsigns, runway numbers, headings, flight levels, and altitudes. "
+    "Keywords: cleared to land, line up and wait, hold short, taxi via, squawk, "
+    "maintain, radar contact, wind, knots, QNH, altimeter, ILS approach, flight level. "
+    "Phonetic alphabet: Alfa, Bravo, Charlie, Delta, Echo, Foxtrot, Golf, Hotel, India, "
+    "Juliett, Kilo, Lima, Mike, November, Oscar, Papa, Quebec, Romeo, Sierra, Tango, "
+    "Uniform, Victor, Whiskey, X-ray, Yankee, Zulu. "
+    "Numbers and digits: zero, one, two, tree, four, fife, six, seven, eight, niner, hundred, thousand."
+)
 
 
 class Transcriber:
@@ -136,6 +149,14 @@ class Transcriber:
             else:
                 audio_float = audio.astype(np.float32)
             audio_filtered = signal.lfilter(self._filter_b, self._filter_a, audio_float)
+            # FIX: un filtro FIR può generare overshoot anche su input già
+            # normalizzato (ripple del filtro). Senza questo clip, la
+            # conversione a int16 più a valle (in utils.py) può andare in
+            # wraparound su singoli campioni, producendo click/scoppi
+            # nell'audio inviato a Groq. utils.py clippa comunque come rete
+            # di sicurezza, ma è più corretto farlo subito qui dove si
+            # conosce l'origine del possibile overshoot.
+            audio_filtered = np.clip(audio_filtered, -1.0, 1.0)
             text = self._transcribe_with_groq(audio_filtered)
         else:
             text = self._transcribe_with_groq(audio)
@@ -179,7 +200,7 @@ class Transcriber:
                     logger.debug("Printer: stampato segmento seq=%d", seq)
                 elif (time.time() - arrived_at) > self.reorder_timeout_s:
                     heapq.heappop(self._result_heap)
-                    self._next_seq_to_print = seq + 1
+                    self._next_seq_to_print = max(self._next_seq_to_print, seq + 1)
                     logger.warning("Printer: timeout per seq=%d, salto avanti.", seq)
                 else:
                     self._result_lock.wait(timeout=self.reorder_timeout_s)
@@ -206,11 +227,13 @@ class Transcriber:
         """
         Stampa metriche di riepilogo ogni 10 secondi.
         Inoltre, se il debug è attivo, stampa la dimensione della coda ogni 2 secondi.
+
+        FIX: usa stop_event.wait() invece di time.sleep(), cosi' allo
+        shutdown il thread si sveglia immediatamente quando stop_event viene
+        settato, invece di aspettare fino a 1s in piu' prima di accorgersene.
         """
         last_queue_log = time.time()
-        while not self.stop_event.is_set():
-            time.sleep(1)  # Controllo ogni secondo per maggiore precisione
-
+        while not self.stop_event.wait(timeout=1.0):
             # === METRICHE COMPLETE OGNI 10 SECONDI ===
             if time.time() - self.metrics["last_log_time"] >= 10:
                 with self.metrics_lock:
@@ -227,7 +250,6 @@ class Transcriber:
             if time.time() - last_queue_log >= 2:
                 last_queue_log = time.time()
                 queue_size = self.transcribe_queue.qsize()
-                # Usa logger.debug per mostrarlo solo se il debug è attivo
                 logger.debug("📋 Coda attuale: %d segmenti in attesa.", queue_size)
 
     def _transcribe_with_groq(self, audio):
@@ -281,6 +303,6 @@ class Transcriber:
         with self._result_lock:
             self._result_lock.notify_all()
         self.printer_thread.join(timeout=self.reorder_timeout_s + 1.0)
-        self.metrics_thread.join(timeout=1.0)
+        self.metrics_thread.join(timeout=1.5)
         self.session.close()
         logger.info("Transcriber fermato.")
