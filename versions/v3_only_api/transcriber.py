@@ -37,8 +37,9 @@ INITIAL_PROMPT = (
 
 class Transcriber:
     
-    def __init__(self, config):
+    def __init__(self, config, event_bus=None):
         logger.debug("Inizializzazione Transcriber...")
+        self.event_bus = event_bus
         groq_cfg = config.get("api", {}).get("groq", {})
         self.api_key = groq_cfg.get("api_key", "")
         if not self.api_key:
@@ -223,6 +224,8 @@ class Transcriber:
         else:
             print("[Transcriber] Nessun testo riconosciuto.")
         print("-" * 40)
+        if self.event_bus:
+            self.event_bus.emit("transcript", text=text)
 
     def _metrics_loop(self):
         """
@@ -246,6 +249,12 @@ class Transcriber:
                     self.metrics["last_log_time"] = time.time()
                 logger.debug("📊 Metriche: inviati=%d, completati=%d, falliti=%d, coda=%d, tempo_medio=%.2fs",
                             submitted, completed, failed, queue_size, avg_time)
+                if self.event_bus:
+                    self.event_bus.emit(
+                        "metrics",
+                        submitted=submitted, completed=completed, failed=failed,
+                        queue_size=queue_size, avg_time=avg_time
+                    )
 
             # === MONITORAGGIO VELOCE DELLA CODA (ogni 2 secondi, solo in DEBUG) ===
             if time.time() - last_queue_log >= 2:

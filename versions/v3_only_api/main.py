@@ -89,7 +89,7 @@ def _find_best_cut_point(buffer, tentative_cut, search_samples, analysis_samples
     return search_start + best_offset
 
 
-def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
+def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg, event_bus=None, stop_event=None):
     """
     Modalità radio: bypassa il VAD e segmenta a durata quasi fissa.
 
@@ -138,7 +138,7 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
     print("Premi Ctrl+C per terminare.\n")
 
     try:
-        while audio.is_running:
+        while audio.is_running and not (stop_event and stop_event.is_set()):
             frame = audio.get_frame(timeout=0.5)
             if frame is None:
                 continue
@@ -177,6 +177,7 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
                 # "allucinazioni" di Whisper (testo plausibile inventato
                 # quando riceve solo rumore/silenzio).
                 send_segment = True
+                rms = None
                 if silence_gate_enabled:
                     rms = float(np.sqrt(np.mean(segment.astype(np.float64) ** 2)))
                     if rms < silence_rms_threshold:
@@ -190,6 +191,13 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
                             "Segmento radio ACCETTATO: RMS %.1f sopra soglia %.1f.",
                             rms, silence_rms_threshold
                         )
+                if event_bus:
+                    event_bus.emit(
+                        "rms",
+                        value=rms if rms is not None else 0.0,
+                        threshold=silence_rms_threshold,
+                        accepted=send_segment
+                    )
 
                 if send_segment:
                     processed = preprocess_radio_audio(segment, rate=rate)
@@ -226,7 +234,7 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
         logger.info("Programma terminato.")
 
 
-def _run_vad_mode(audio, transcriber, rate, frame_duration_ms, vad_cfg):
+def _run_vad_mode(audio, transcriber, rate, frame_duration_ms, vad_cfg, event_bus=None, stop_event=None):
     """Modalità normale: segmentazione tramite VAD (rispetta i confini del parlato)."""
     aggressiveness = vad_cfg.get("aggressiveness", 2)
     silence_timeout_s = vad_cfg.get("silence_timeout_s", 1.2)
@@ -254,7 +262,7 @@ def _run_vad_mode(audio, transcriber, rate, frame_duration_ms, vad_cfg):
     logger.info("Audio capture avviato. In ascolto...")
 
     try:
-        while audio.is_running:
+        while audio.is_running and not (stop_event and stop_event.is_set()):
             frame = audio.get_frame(timeout=0.5)
             if frame is None:
                 continue
@@ -268,10 +276,16 @@ def _run_vad_mode(audio, transcriber, rate, frame_duration_ms, vad_cfg):
         logger.info("Programma terminato.")
 
 
-def main():
-    logger.info("🚀 Avvio Audio Transcriber v3.0")
-    config = load_config()
+def run_pipeline(config, event_bus=None, stop_event=None):
+    """
+    Avvia cattura audio + trascrizione e li lascia girare finché lo stream
+    è attivo o finché 'stop_event' non viene settato dall'esterno.
 
+    Punto di ingresso condiviso da main() (uso da riga di comando) e da
+    gui.py (che lo esegue in un thread di background e usa 'event_bus' per
+    aggiornare i widget e 'stop_event' per il bottone Stop). La logica di
+    cattura/segmentazione/trascrizione resta identica in entrambi i casi.
+    """
     rate = config.get("audio", {}).get("rate", 16000)
     channels = config.get("audio", {}).get("channels", 1)
     frame_duration_ms = config.get("audio", {}).get("frame_duration_ms", 30)
@@ -283,14 +297,22 @@ def main():
     bypass_vad = radio_cfg.get("bypass_vad", False)
 
     audio = AudioCapture(rate=rate, channels=channels, chunk=chunk)
-    transcriber = Transcriber(config)
+    transcriber = Transcriber(config, event_bus=event_bus)
     audio.start()
 
     if radio_enabled and bypass_vad:
-        _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg)
+        _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg,
+                         event_bus=event_bus, stop_event=stop_event)
     else:
         vad_cfg = config.get("vad", {})
-        _run_vad_mode(audio, transcriber, rate, frame_duration_ms, vad_cfg)
+        _run_vad_mode(audio, transcriber, rate, frame_duration_ms, vad_cfg,
+                       event_bus=event_bus, stop_event=stop_event)
+
+
+def main():
+    logger.info(" Avvio Audio Transcriber v3.0")
+    config = load_config()
+    run_pipeline(config)
 
 
 if __name__ == "__main__":

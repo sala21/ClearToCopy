@@ -58,9 +58,3 @@ if debug_config.get("log_to_file", True):
 # =============================================
 def get_logger():
     return logger
-
-# Stampa un messaggio iniziale per confermare la modalità
-if debug_config.get("enabled", False):
-    logger.debug("MODALITÀ DEBUG ATTIVA - Tutti i messaggi sono visibili a schermo.")
-else:
-    logger.info("Modalità normale (debug disattivato). Per attivarlo, imposta 'enabled': true in config.json")
