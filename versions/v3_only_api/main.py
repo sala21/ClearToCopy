@@ -56,23 +56,70 @@ def preprocess_radio_audio(audio_int16, rate=16000):
     return (audio_float * 32767).astype(np.int16)
 
 
+def _find_best_cut_point(buffer, tentative_cut, search_samples, analysis_samples, min_cut):
+    """
+    Invece di tagliare esattamente a 'tentative_cut' (durata fissa), cerca
+    il punto di minima energia in una finestra [min_cut, tentative_cut],
+    così il taglio cade con più probabilità in una pausa reale del parlato
+    invece che a metà di una parola.
+
+    Il segnale viene diviso in sotto-finestre da 'analysis_samples' campioni
+    e si sceglie l'inizio della sotto-finestra con energia RMS minima.
+    'min_cut' impedisce di accorciare troppo il segmento (evita segmenti
+    troppo corti se il parlato è continuo per tutta la finestra di ricerca).
+    """
+    search_start = max(min_cut, tentative_cut - search_samples)
+    region = buffer[search_start:tentative_cut]
+    if len(region) < analysis_samples:
+        return tentative_cut
+
+    n_windows = len(region) // analysis_samples
+    if n_windows == 0:
+        return tentative_cut
+
+    best_offset = 0
+    best_energy = None
+    for i in range(n_windows):
+        w = region[i * analysis_samples:(i + 1) * analysis_samples]
+        energy = float(np.mean(w.astype(np.float64) ** 2))
+        if best_energy is None or energy < best_energy:
+            best_energy = energy
+            best_offset = i * analysis_samples
+
+    return search_start + best_offset
+
+
 def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
     """
-    Modalità radio: bypassa il VAD e segmenta a durata fissa.
+    Modalità radio: bypassa il VAD e segmenta a durata quasi fissa.
 
     Il buffer è un array numpy pre-allocato con scrittura via slicing,
     non una lista con np.append ripetuto: np.append ricopia l'intero
     array ad ogni chiamata, quindi con un frame ogni 30ms si ricopiava
     l'intero buffer (fino a ~48000 campioni per segmenti da 3s) decine
     di volte al secondo per tutta la sessione.
+
+    Il punto di taglio non è più esattamente 'segment_samples': viene
+    cercato il punto di minima energia negli ultimi 'boundary_search_s'
+    secondi del segmento (vedi _find_best_cut_point), per evitare di
+    tagliare a metà parola quando la pausa naturale tra le parole cade
+    vicino al bordo del segmento.
     """
     segment_duration_s = radio_cfg.get("segment_duration_s", 3.0)
     overlap_s = radio_cfg.get("overlap_s", 0.0)
     silence_gate_enabled = radio_cfg.get("silence_gate_enabled", False)
     silence_rms_threshold = radio_cfg.get("silence_rms_threshold", 300)
+    boundary_search_s = radio_cfg.get("boundary_search_s", 0.4)
+    boundary_analysis_ms = radio_cfg.get("boundary_analysis_ms", 20)
 
     segment_samples = int(rate * segment_duration_s)
     overlap_samples = int(rate * overlap_s)
+    search_samples = min(int(rate * boundary_search_s), segment_samples // 2)
+    analysis_samples = max(1, int(rate * boundary_analysis_ms / 1000))
+    # Non accorciare il segmento sotto il 60% della durata target, per
+    # evitare segmenti troppo brevi quando il parlato copre tutta la
+    # finestra di ricerca senza pause rilevabili.
+    min_cut_samples = int(segment_samples * 0.6)
     # Margine di sicurezza pari a un frame extra, per non dover troncare
     # se l'ultimo frame scritto supera esattamente segment_samples.
     buffer_capacity = segment_samples + overlap_samples + frame_samples
@@ -81,8 +128,10 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
     write_pos = 0
 
     logger.info(
-        "Modalità RADIO attivata: bypass VAD, segmenti di %.1fs, overlap %.1fs, gate silenzio %s",
-        segment_duration_s, overlap_s, "ON" if silence_gate_enabled else "OFF"
+        "Modalità RADIO attivata: bypass VAD, segmenti di %.1fs (taglio dinamico su pausa, "
+        "ricerca %.2fs, min %.1fs), overlap %.1fs, gate silenzio %s",
+        segment_duration_s, boundary_search_s, min_cut_samples / rate, overlap_s,
+        "ON" if silence_gate_enabled else "OFF"
     )
     print("\n=== ASCOLTO RADIO (con preprocessing) ===")
     print(f"API: Groq ({transcriber.groq_model})")
@@ -108,8 +157,20 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
             write_pos += n
 
             while write_pos >= segment_samples:
-                segment = radio_buffer[:segment_samples].copy()
-                logger.debug("Buffer radio pieno: segmento da %d campioni pronto per il gate.", segment_samples)
+                cut = _find_best_cut_point(
+                    radio_buffer[:write_pos],
+                    segment_samples,
+                    search_samples,
+                    analysis_samples,
+                    min_cut_samples
+                )
+                if cut != segment_samples:
+                    logger.debug(
+                        "Taglio spostato su pausa rilevata: %d campioni (target %d, -%.2fs).",
+                        cut, segment_samples, (segment_samples - cut) / rate
+                    )
+                segment = radio_buffer[:cut].copy()
+                logger.debug("Buffer radio pieno: segmento da %d campioni pronto per il gate.", cut)
 
                 # Gate energetico: salta segmenti praticamente silenziosi.
                 # Evita chiamate Groq sprecate su dead air e riduce le
@@ -141,18 +202,19 @@ def _run_radio_mode(audio, transcriber, rate, frame_samples, radio_cfg):
                 # NOTA: questo può causare piccole ripetizioni di parole ai
                 # bordi nella trascrizione finale; una cucitura testuale
                 # completa sarebbe più corretta ma è fuori scopo qui.
-                remaining = write_pos - segment_samples
+                remaining = write_pos - cut
                 if overlap_samples > 0:
-                    tail_start = segment_samples - overlap_samples
-                    tail = radio_buffer[tail_start:segment_samples].copy()
-                    radio_buffer[:overlap_samples] = tail
+                    tail_start = max(0, cut - overlap_samples)
+                    tail = radio_buffer[tail_start:cut].copy()
+                    tail_len = len(tail)
+                    radio_buffer[:tail_len] = tail
                     if remaining > 0:
-                        radio_buffer[overlap_samples:overlap_samples + remaining] = \
-                            radio_buffer[segment_samples:segment_samples + remaining]
-                    write_pos = overlap_samples + remaining
+                        radio_buffer[tail_len:tail_len + remaining] = \
+                            radio_buffer[cut:cut + remaining]
+                    write_pos = tail_len + remaining
                 else:
                     if remaining > 0:
-                        radio_buffer[:remaining] = radio_buffer[segment_samples:segment_samples + remaining]
+                        radio_buffer[:remaining] = radio_buffer[cut:cut + remaining]
                     write_pos = remaining
 
     except KeyboardInterrupt:

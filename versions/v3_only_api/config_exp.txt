@@ -1,0 +1,44 @@
+{
+    "api": {
+        "groq": {
+            "model": "whisper-large-v3-turbo",       // Modello Groq usato per la trascrizione (whisper-large-v3-turbo = più rapido, whisper-large-v3 = più accurato ma più lento)
+            "url": "https://api.groq.com/openai/v1/audio/transcriptions",  // Endpoint dell'API Groq per la trascrizione audio
+            "timeout_s": 10,                         // Timeout in secondi per ogni singola richiesta HTTP a Groq: oltre questo tempo il segmento è considerato perso/fallito
+            "max_concurrent_requests": 5,            // Numero massimo di richieste a Groq eseguite in parallelo (dimensione del ThreadPoolExecutor e del pool di connessioni HTTP)
+            "reorder_timeout_s": 3.0,                // Tempo massimo di attesa nel buffer di riordino prima di stampare comunque un segmento fuori sequenza, saltando quelli mancanti (utile se una risposta Groq è troppo lenta o non arriva)
+            "use_flac": true                         // Se true, l'audio viene codificato in FLAC prima dell'upload (payload più piccolo di WAV, upload più veloce); richiede il pacchetto 'soundfile'
+        }
+    },
+    "audio": {
+        "rate": 16000,                               // Frequenza di campionamento dell'audio in Hz (16 kHz è lo standard per Whisper e per il parlato)
+        "channels": 1,                               // Numero di canali audio (1 = mono, richiesto da Whisper)
+        "frame_duration_ms": 30                      // Durata in millisecondi di ogni frame audio letto dal microfono/stream (determina la granularità del VAD e della cattura)
+    },
+    "vad": {
+        "aggressiveness": 1,                         // Sensibilità del VAD di webrtcvad, da 0 (permissivo, rileva più parlato ma anche rumore) a 3 (aggressivo, filtra più rumore ma rischia di perdere parlato debole)
+        "silence_timeout_s": 1.0,                    // Durata di silenzio continuo necessaria per considerare terminata una trasmissione e chiudere il segmento
+        "max_utterance_s": 15.0,                     // Durata massima di un singolo segmento vocale: se il parlato continua oltre questo limite, il segmento viene tagliato forzatamente
+        "min_segment_duration_s": 0.6,               // Durata minima che un segmento deve avere per essere inviato alla trascrizione; segmenti più corti (probabilmente rumore/falsi positivi) vengono scartati
+        "activation_ratio": 0.4                      // Frazione minima di frame "vocali" nella finestra di preroll (300 ms) necessaria per far scattare l'inizio di un segmento (valori più bassi = attivazione più facile/sensibile)
+    },
+    "filter": {
+        "enabled": true,                             // Attiva o disattiva il filtro passa-banda applicato centralmente in transcriber.py prima dell'invio a Groq
+        "band_min": 300,                             // Frequenza minima (Hz) lasciata passare dal filtro passa-banda: tutto sotto viene attenuato (rimuove rumori bassi, ronzii, ecc.)
+        "band_max": 3400                             // Frequenza massima (Hz) lasciata passare dal filtro passa-banda: taglia le frequenze alte non necessarie al parlato radio (tipico range della voce su comunicazioni radio/telefoniche)
+    },
+    "debug": {
+        "enabled": false,                            // Se true, attiva il logging di livello DEBUG a console (tutti i messaggi diagnostici, molto più verboso)
+        "log_to_file": true,                         // Se true, scrive sempre tutti i log (compreso il DEBUG) nel file transcriber.log, indipendentemente da cosa viene mostrato a console
+        "console_level": "INFO"                      // Livello minimo di log mostrato a console quando 'enabled' è false (es. INFO, WARNING, ERROR); ignorato se 'enabled' è true (in quel caso la console mostra tutto)
+    },
+    "radio": {
+        "enabled": true,                             // Attiva la modalità radio (necessaria, insieme a bypass_vad, per usare la segmentazione a finestra fissa invece del VAD classico)
+        "segment_duration_s": 3.0,                   // Durata target di ogni segmento audio in modalità radio, prima della ricerca del punto di taglio ottimale
+        "bypass_vad": false,                         // Se true, salta completamente il VAD e usa la segmentazione a finestre di durata quasi fissa (_run_radio_mode); se false, usa il VAD classico (_run_vad_mode)
+        "overlap_s": 0.3,                            // Quanti secondi dell'audio a fine segmento vengono ripetuti come contesto all'inizio del segmento successivo, per ridurre il rischio di perdere parole tagliate al bordo
+        "silence_gate_enabled": true,                // Se true, scarta (non invia a Groq) i segmenti la cui energia RMS è sotto la soglia 'silence_rms_threshold', evitando chiamate API sprecate su dead air e allucinazioni di Whisper sul silenzio
+        "silence_rms_threshold": 50,                 // Soglia di energia RMS sotto la quale un segmento è considerato silenzio e scartato (valore da calibrare sui livelli audio reali: qui derivato da test live, non un default arbitrario)
+        "boundary_search_s": 0.4,                    // Ampiezza (in secondi, a ritroso dal bordo del segmento) della finestra in cui viene cercato il punto di minima energia per spostare il taglio su una pausa reale invece che a metà parola
+        "boundary_analysis_ms": 20                   // Dimensione (in millisecondi) delle sotto-finestre usate per calcolare l'energia durante la ricerca del punto di taglio migliore (risoluzione dell'analisi: più piccolo = ricerca più fine ma più costosa)
+    }
+}
