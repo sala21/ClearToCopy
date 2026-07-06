@@ -369,9 +369,9 @@ class TranscriberGUI:
  
     def _build_ui(self):
         self.root.title("ATC Radio Transcriber")
-        self.root.geometry("960x960")
+        self.root.geometry("960x720")
         self.root.configure(bg=BG)
-        self.root.minsize(820, 540)
+        self.root.minsize(820, 500)
 
         # HEADER
         header = tk.Frame(self.root, bg=BG, height=50)
