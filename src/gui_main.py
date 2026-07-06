@@ -2,7 +2,7 @@ import os
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog  # Aggiunto filedialog
+from tkinter import ttk, scrolledtext, messagebox
 import json
 import logging
 
@@ -39,30 +39,58 @@ TITLE_FONT = ("Segoe UI", 14, "bold")
 class DebugWindow:
     def __init__(self, master):
         self.window = tk.Toplevel(master)
-        self.window.title("Debug Log Log")
-        self.window.geometry("600x400")
+        self.window.title("🐞 Debug Log - AeroVoice Transcriber")
+        self.window.geometry("700x450")
+        self.window.minsize(500, 300)
         self.window.configure(bg=BG)
-
-        self.text = scrolledtext.ScrolledText(
-            self.window, wrap="word", bg="#05070a", fg=FG,
-            font=FONT_MONO_SMALL, relief="flat", padx=10, pady=10
-        )
-        self.text.pack(fill="both", expand=True, padx=10, pady=10)
-        self.text.config(state="disabled")
-
         self.window.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.is_open = True
 
-    def append_log(self, msg):
-        if not self.is_open:
+        self.text_area = scrolledtext.ScrolledText(
+            self.window,
+            wrap="word",
+            bg="#05070a",
+            fg=FG,
+            insertbackground=FG,
+            font=FONT_MONO,
+            relief="flat",
+            padx=10,
+            pady=8,
+            state="disabled",
+            bd=0
+        )
+        self.text_area.pack(fill="both", expand=True, padx=12, pady=12)
+
+        self.log_file = "transcriber.log"
+        self.last_pos = 0
+        self.running = True
+        self._poll_log()
+
+    def _poll_log(self):
+        if not self.running:
             return
-        self.text.config(state="normal")
-        self.text.insert("end", msg + "\n")
-        self.text.see("end")
-        self.text.config(state="disabled")
+        try:
+            if os.path.exists(self.log_file):
+                with open(self.log_file, "r", encoding="utf-8") as f:
+                    f.seek(self.last_pos)
+                    new_content = f.read()
+                    self.last_pos = f.tell()
+                    if new_content:
+                        self.text_area.config(state="normal")
+                        self.text_area.insert("end", new_content)
+                        self.text_area.see("end")
+                        self.text_area.config(state="disabled")
+            else:
+                if self.last_pos == 0:
+                    self.text_area.config(state="normal")
+                    self.text_area.insert("end", "[DEBUG] In attesa del file di log...\n")
+                    self.text_area.see("end")
+                    self.text_area.config(state="disabled")
+        except Exception:
+            pass
+        self.window.after(500, self._poll_log)
 
     def on_close(self):
-        self.is_open = False
+        self.running = False
         self.window.destroy()
 
 
@@ -70,224 +98,280 @@ class DebugWindow:
 # FINESTRA DI CONFIGURAZIONE
 # ============================================================================
 class ConfigWindow:
-    def __init__(self, master, current_config, on_save_callback):
+    def __init__(self, master, app_ref):
+        self.master = master
+        self.app = app_ref
         self.window = tk.Toplevel(master)
-        self.window.title("Configurazione Avanzata")
-        self.window.geometry("450x550")
+        self.window.title("⚙️ Configurazione - ATC Transcriber")
+        self.window.geometry("620x520")
+        self.window.minsize(500, 400)
         self.window.configure(bg=BG)
-        self.window.resizable(False, False)
+        self.window.transient(master)
+        self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.config = current_config
-        self.on_save = on_save_callback
+        self.config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        self.config_data = self._load_config()
+        self.entries = {}
+        self._build_ui()
 
-        # Notebook per Tab
-        style = ttk.Style()
-        style.theme_use("default")
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=PANEL_BG, foreground=FG,
-                        padding=[12, 4], font=FONT_SMALL)
-        style.map("TNotebook.Tab", background=[("selected", CARD_BG)],
-                  foreground=[("selected", ACCENT_CYAN)])
-
-        notebook = ttk.Notebook(self.window)
-        notebook.pack(fill="both", expand=True, padx=15, pady=15)
-
-        # Tab Audio & VAD
-        tab_audio = tk.Frame(notebook, bg=CARD_BG)
-        notebook.add(tab_audio, text=" Audio & VAD ")
-        self._build_audio_tab(tab_audio)
-
-        # Tab API & Whisper
-        tab_api = tk.Frame(notebook, bg=CARD_BG)
-        notebook.add(tab_api, text=" API & Whisper ")
-        self._build_api_tab(tab_api)
-
-        # Footer Buttons
-        btn_frame = tk.Frame(self.window, bg=BG)
-        btn_frame.pack(fill="x", side="bottom", padx=15, pady=(0, 15))
-
-        tk.Button(btn_frame, text="Annulla", command=self.window.destroy,
-                  bg="#2a2a2a", fg=FG, activebackground="#3d3d3d", font=FONT,
-                  relief="flat", padx=15, pady=5, bd=0).pack(side="right", padx=(10, 0))
-
-        tk.Button(btn_frame, text="Salva Configurazione", command=self._save,
-                  bg=ACCENT_CYAN, fg="#04140a", activebackground="#00b8e6", font=FONT_BOLD,
-                  relief="flat", padx=15, pady=5, bd=0).pack(side="right")
-
-    def _build_audio_tab(self, frame):
-        tk.Label(frame, text="Parametri Acquisizione & Filtri", font=FONT_BOLD, fg=ACCENT_CYAN, bg=CARD_BG).pack(anchor="w", padx=15, pady=(15, 10))
-        
-        # Audio Rate
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=4)
-        tk.Label(r, text="Frequenza di Campionamento (Hz):", fg=FG, bg=CARD_BG).pack(side="left")
-        self.rate_ent = tk.Entry(r, bg="#05070a", fg=FG, insertbackground=FG, bd=0, width=10, font=FONT)
-        self.rate_ent.pack(side="right")
-        self.rate_ent.insert(0, str(self.config.get("audio", {}).get("rate", 16000)))
-
-        # Filtro Passa Banda
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=10)
-        self.filter_var = tk.BooleanVar(value=self.config.get("audio", {}).get("filter_bandpass", True))
-        tk.Checkbutton(r, text="Attiva Filtro Passa-Banda (300-3400 Hz)", variable=self.filter_var,
-                       bg=CARD_BG, fg=FG, selectcolor="#05070a", activebackground=CARD_BG,
-                       activeforeground=FG).pack(side="left")
-
-        # Sezione VAD
-        tk.Label(frame, text="Voice Activity Detection (VAD)", font=FONT_BOLD, fg=ACCENT_CYAN, bg=CARD_BG).pack(anchor="w", padx=15, pady=(20, 10))
-        
-        # Aggressività VAD
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=4)
-        tk.Label(r, text="Aggressività VAD (0-3):", fg=FG, bg=CARD_BG).pack(side="left")
-        self.vad_agg_ent = tk.Entry(r, bg="#05070a", fg=FG, insertbackground=FG, bd=0, width=10, font=FONT)
-        self.vad_agg_ent.pack(side="right")
-        self.vad_agg_ent.insert(0, str(self.config.get("vad", {}).get("aggressiveness", 1)))
-
-        # Silence Timeout
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=4)
-        tk.Label(r, text="Timeout Silenzio (secondi):", fg=FG, bg=CARD_BG).pack(side="left")
-        self.vad_sil_ent = tk.Entry(r, bg="#05070a", fg=FG, insertbackground=FG, bd=0, width=10, font=FONT)
-        self.vad_sil_ent.pack(side="right")
-        self.vad_sil_ent.insert(0, str(self.config.get("vad", {}).get("silence_timeout_s", 1.0)))
-
-        # Max Utterance
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=4)
-        tk.Label(r, text="Durata Massima Segmento (sec):", fg=FG, bg=CARD_BG).pack(side="left")
-        self.vad_max_ent = tk.Entry(r, bg="#05070a", fg=FG, insertbackground=FG, bd=0, width=10, font=FONT)
-        self.vad_max_ent.pack(side="right")
-        self.vad_max_ent.insert(0, str(self.config.get("vad", {}).get("max_utterance_s", 15.0)))
-
-    def _build_api_tab(self, frame):
-        tk.Label(frame, text="Credenziali ed Endpoint Groq", font=FONT_BOLD, fg=ACCENT_CYAN, bg=CARD_BG).pack(anchor="w", padx=15, pady=(15, 10))
-        
-        # API KEY
-        tk.Label(frame, text="Groq API Key:", fg=FG, bg=CARD_BG).pack(anchor="w", padx=15)
-        self.api_key_ent = tk.Entry(frame, bg="#05070a", fg=FG, insertbackground=FG, bd=0, font=FONT, show="*")
-        self.api_key_ent.pack(fill="x", padx=15, pady=(4, 10))
-        self.api_key_ent.insert(0, self.config.get("api", {}).get("groq", {}).get("api_key", ""))
-
-        # Sezione Whisper
-        tk.Label(frame, text="Parametri Modello Whisper", font=FONT_BOLD, fg=ACCENT_CYAN, bg=CARD_BG).pack(anchor="w", padx=15, pady=(15, 10))
-
-        # Modello
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=4)
-        tk.Label(r, text="Modello Groq:", fg=FG, bg=CARD_BG).pack(side="left")
-        self.model_ent = tk.Entry(r, bg="#05070a", fg=FG, insertbackground=FG, bd=0, width=22, font=FONT)
-        self.model_ent.pack(side="right")
-        self.model_ent.insert(0, self.config.get("whisper", {}).get("model", "whisper-large-v3"))
-
-        # Lingua
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=4)
-        tk.Label(r, text="Lingua di base (es. 'en', 'it'):", fg=FG, bg=CARD_BG).pack(side="left")
-        self.lang_ent = tk.Entry(r, bg="#05070a", fg=FG, insertbackground=FG, bd=0, width=10, font=FONT)
-        self.lang_ent.pack(side="right")
-        self.lang_ent.insert(0, self.config.get("whisper", {}).get("language", "en"))
-
-        # Concorrenza Worker
-        r = tk.Frame(frame, bg=CARD_BG)
-        r.pack(fill="x", padx=15, pady=4)
-        tk.Label(r, text="Thread Concorrenti (Worker):", fg=FG, bg=CARD_BG).pack(side="left")
-        self.workers_ent = tk.Entry(r, bg="#05070a", fg=FG, insertbackground=FG, bd=0, width=10, font=FONT)
-        self.workers_ent.pack(side="right")
-        self.workers_ent.insert(0, str(self.config.get("whisper", {}).get("max_workers", 4)))
-
-    def _save(self):
+    def _load_config(self):
         try:
-            new_cfg = {
-                "audio": {
-                    "rate": int(self.rate_ent.get()),
-                    "channels": self.config.get("audio", {}).get("channels", 1),
-                    "frame_duration_ms": self.config.get("audio", {}).get("frame_duration_ms", 30),
-                    "filter_bandpass": self.filter_var.get()
-                },
-                "vad": {
-                    "aggressiveness": int(self.vad_agg_ent.get()),
-                    "silence_timeout_s": float(self.vad_sil_ent.get()),
-                    "max_utterance_s": float(self.vad_max_ent.get()),
-                    "min_segment_duration_s": self.config.get("vad", {}).get("min_segment_duration_s", 0.6),
-                    "activation_ratio": self.config.get("vad", {}).get("activation_ratio", 0.4)
-                },
-                "api": {
-                    "groq": {
-                        "api_key": self.api_key_ent.get().strip()
-                    }
-                },
-                "whisper": {
-                    "model": self.model_ent.get().strip(),
-                    "language": self.lang_ent.get().strip(),
-                    "max_workers": int(self.workers_ent.get())
-                },
-                "debug": self.config.get("debug", {})
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _build_ui(self):
+        main_frame = tk.Frame(self.window, bg=BG)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        tk.Label(main_frame, text="Modifica Configurazione", font=TITLE_FONT,
+                 fg=ACCENT_CYAN, bg=BG).pack(anchor="w", pady=(0, 15))
+
+        # Canvas con scroll
+        canvas = tk.Canvas(main_frame, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True, pady=(0, 15))
+        scrollbar.pack(side="right", fill="y", pady=(0, 15))
+
+        # Configura le colonne del frame scrollabile
+        scrollable_frame.grid_columnconfigure(0, weight=0, minsize=200)
+        scrollable_frame.grid_columnconfigure(1, weight=1)
+
+        row = 0
+
+        # --- Sezione VAD ---
+        lbl_section = tk.Label(scrollable_frame, text="Voice Activity Detection (VAD)",
+                               font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
+        lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+        row += 1
+
+        vad_params = [
+            ("aggressiveness", "Aggressiveness (0-3)", self.config_data.get("vad", {}).get("aggressiveness", 1)),
+            ("silence_timeout_s", "Silence timeout (s)", self.config_data.get("vad", {}).get("silence_timeout_s", 1.0)),
+            ("max_utterance_s", "Max utterance (s)", self.config_data.get("vad", {}).get("max_utterance_s", 15.0)),
+            ("min_segment_duration_s", "Min segment duration (s)", self.config_data.get("vad", {}).get("min_segment_duration_s", 0.6)),
+            ("activation_ratio", "Activation ratio (0-1)", self.config_data.get("vad", {}).get("activation_ratio", 0.4)),
+        ]
+        for key, label, default_value in vad_params:
+            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
+            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+                             insertbackground=FG, relief="flat", bd=0)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.insert(0, str(default_value))
+            self.entries[key] = entry
+            row += 1
+
+        # --- Sezione Filtro ---
+        lbl_section = tk.Label(scrollable_frame, text="Filtro Passa-Banda",
+                               font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
+        lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+        row += 1
+
+        filter_params = [
+            ("filter_enabled", "Abilitato (true/false)", self.config_data.get("filter", {}).get("enabled", True)),
+            ("band_min", "Band min (Hz)", self.config_data.get("filter", {}).get("band_min", 300)),
+            ("band_max", "Band max (Hz)", self.config_data.get("filter", {}).get("band_max", 3400)),
+        ]
+        for key, label, default_value in filter_params:
+            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
+            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+                             insertbackground=FG, relief="flat", bd=0)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.insert(0, str(default_value))
+            self.entries[key] = entry
+            row += 1
+
+        # --- Sezione API Groq ---
+        lbl_section = tk.Label(scrollable_frame, text="API Groq",
+                               font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
+        lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+        row += 1
+
+        api_params = [
+            ("model", "Modello", self.config_data.get("api", {}).get("groq", {}).get("model", "whisper-large-v3")),
+            ("timeout_s", "Timeout (s)", self.config_data.get("api", {}).get("groq", {}).get("timeout_s", 10)),
+            ("max_concurrent_requests", "Max concurrent requests", self.config_data.get("api", {}).get("groq", {}).get("max_concurrent_requests", 5)),
+            ("use_flac", "Usa FLAC (true/false)", self.config_data.get("api", {}).get("groq", {}).get("use_flac", True)),
+        ]
+        for key, label, default_value in api_params:
+            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
+            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+                             insertbackground=FG, relief="flat", bd=0)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.insert(0, str(default_value))
+            self.entries[key] = entry
+            row += 1
+
+        # --- Pulsanti distanziati (Applicata Soluzione 1) ---
+        btn_container = tk.Frame(main_frame, bg=BG)
+        # padx=30 introduce lo spazio a sinistra e a destra (staccandosi dalla scrollbar)
+        btn_container.pack(fill="x", pady=(15, 5), padx=30) 
+        
+        btn_container.grid_columnconfigure(0, weight=1)
+        btn_container.grid_columnconfigure(1, weight=0)
+        btn_container.grid_columnconfigure(2, weight=1)
+
+        tk.Button(btn_container, text="🔄 APPLICA", command=self._apply_config,
+                  bg=ACCENT_CYAN, fg="#04140a", font=FONT_BOLD, relief="flat",
+                  padx=20, pady=8, cursor="hand2").grid(row=0, column=1, pady=(0, 10))
+
+        tk.Button(btn_container, text="✅ OK", command=self._save_and_close,
+                  bg=ACCENT_GREEN, fg="#04140a", font=FONT_BOLD, relief="flat",
+                  padx=20, pady=8, cursor="hand2").grid(row=1, column=1, pady=(0, 0))
+
+    def _get_patch_from_entries(self):
+        return {
+            "vad": {
+                "aggressiveness": int(self.entries["aggressiveness"].get()),
+                "silence_timeout_s": float(self.entries["silence_timeout_s"].get()),
+                "max_utterance_s": float(self.entries["max_utterance_s"].get()),
+                "min_segment_duration_s": float(self.entries["min_segment_duration_s"].get()),
+                "activation_ratio": float(self.entries["activation_ratio"].get()),
+            },
+            "filter": {
+                "enabled": self.entries["filter_enabled"].get().lower() == "true",
+                "band_min": int(self.entries["band_min"].get()),
+                "band_max": int(self.entries["band_max"].get()),
+            },
+            "api": {
+                "groq": {
+                    "model": self.entries["model"].get(),
+                    "timeout_s": int(self.entries["timeout_s"].get()),
+                    "max_concurrent_requests": int(self.entries["max_concurrent_requests"].get()),
+                    "use_flac": self.entries["use_flac"].get().lower() == "true",
+                }
             }
+        }
 
-            if not new_cfg["api"]["groq"]["api_key"]:
-                raise ValueError("La chiave API Groq è obbligatoria.")
+    def _save_config_with_patch(self, patch):
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception:
+            config = {}
 
-            self.on_save(new_cfg)
-            self.window.destroy()
+        if "vad" in patch:
+            if "vad" not in config:
+                config["vad"] = {}
+            config["vad"].update(patch["vad"])
+        if "filter" in patch:
+            if "filter" not in config:
+                config["filter"] = {}
+            config["filter"].update(patch["filter"])
+        if "api" in patch:
+            if "api" not in config:
+                config["api"] = {}
+            if "groq" in patch["api"]:
+                if "groq" not in config["api"]:
+                    config["api"]["groq"] = {}
+                for key, value in patch["api"]["groq"].items():
+                    config["api"]["groq"][key] = value
+
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+
+        return config
+
+    def _update_entries_from_config(self, config):
+        self.entries["aggressiveness"].delete(0, tk.END)
+        self.entries["aggressiveness"].insert(0, str(config.get("vad", {}).get("aggressiveness", 1)))
+        self.entries["silence_timeout_s"].delete(0, tk.END)
+        self.entries["silence_timeout_s"].insert(0, str(config.get("vad", {}).get("silence_timeout_s", 1.0)))
+        self.entries["max_utterance_s"].delete(0, tk.END)
+        self.entries["max_utterance_s"].insert(0, str(config.get("vad", {}).get("max_utterance_s", 15.0)))
+        self.entries["min_segment_duration_s"].delete(0, tk.END)
+        self.entries["min_segment_duration_s"].insert(0, str(config.get("vad", {}).get("min_segment_duration_s", 0.6)))
+        self.entries["activation_ratio"].delete(0, tk.END)
+        self.entries["activation_ratio"].insert(0, str(config.get("vad", {}).get("activation_ratio", 0.4)))
+        self.entries["filter_enabled"].delete(0, tk.END)
+        self.entries["filter_enabled"].insert(0, str(config.get("filter", {}).get("enabled", True)))
+        self.entries["band_min"].delete(0, tk.END)
+        self.entries["band_min"].insert(0, str(config.get("filter", {}).get("band_min", 300)))
+        self.entries["band_max"].delete(0, tk.END)
+        self.entries["band_max"].insert(0, str(config.get("filter", {}).get("band_max", 3400)))
+        self.entries["model"].delete(0, tk.END)
+        self.entries["model"].insert(0, config.get("api", {}).get("groq", {}).get("model", "whisper-large-v3"))
+        self.entries["timeout_s"].delete(0, tk.END)
+        self.entries["timeout_s"].insert(0, str(config.get("api", {}).get("groq", {}).get("timeout_s", 10)))
+        self.entries["max_concurrent_requests"].delete(0, tk.END)
+        self.entries["max_concurrent_requests"].insert(0, str(config.get("api", {}).get("groq", {}).get("max_concurrent_requests", 5)))
+        self.entries["use_flac"].delete(0, tk.END)
+        self.entries["use_flac"].insert(0, str(config.get("api", {}).get("groq", {}).get("use_flac", True)))
+
+    def _apply_config(self):
+        try:
+            patch = self._get_patch_from_entries()
+            updated_config = self._save_config_with_patch(patch)
+            self.app._reload_config()
+            self._update_entries_from_config(updated_config)
+            self.app.error_label.config(text="✅ Configurazione applicata (finestra rimane aperta).", fg=ACCENT_GREEN)
         except Exception as e:
-            messagebox.showerror("Errore di Validazione", f"Controlla i campi inseriti:\n{e}", parent=self.window)
+            self.app.error_label.config(text=f"❌ Errore durante l'applicazione: {e}", fg=ACCENT_RED)
+
+    def _save_and_close(self):
+        try:
+            patch = self._get_patch_from_entries()
+            updated_config = self._save_config_with_patch(patch)
+            self.app._reload_config()
+            self.window.destroy()
+            self.app.error_label.config(text="✅ Configurazione salvata e applicata.", fg=ACCENT_GREEN)
+        except Exception as e:
+            self.app.error_label.config(text=f"❌ Errore durante il salvataggio: {e}", fg=ACCENT_RED)
 
     def on_close(self):
         self.window.destroy()
-
-
 # ============================================================================
-# INTERFACCIA PRINCIPALE (GUI)
+# APPLICAZIONE PRINCIPALE
 # ============================================================================
 class TranscriberGUI:
     def __init__(self, root):
         self.root = root
-        self.config = load_config()
-
-        self.event_bus = EventBus()
+        self.bus = EventBus()
         self.stop_event = threading.Event()
-        self.pipeline_thread = None
+        self.worker = None
         self.running = False
-        self.debug_enabled = False
 
+        self._last_rms = 0.0
+        self._last_threshold = 50.0
+
+        self.debug_enabled = False
         self.debug_window = None
         self.config_window = None
-        self.transcript_buffer = []
 
-        # Inizializzazione Logger custom per intercettare i log di debug
-        root_logger = logging.getLogger("AudioTranscriber")
-        from logger import DebugBufferHandler
-        self.debug_handler = DebugBufferHandler()
-        root_logger.addHandler(self.debug_handler)
+        self.vad = None
+        self.transcriber = None
+
+        self.transcript_buffer = []
+        self.autosave_interval = 10
+        self.autosave_thread = None
 
         self._build_ui()
-        self._sync_quick_config_labels()
-
-        # Inizia il polling degli eventi asincroni
         self.root.after(100, self._poll_events)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def _card(self, parent, title, height=None, expand=False):
-        """Helper per creare un pannello stilizzato ad effetto card."""
-        frame = tk.Frame(parent, bg=PANEL_BG, highlightthickness=1, highlightbackground=BORDER)
-        if height:
-            frame.pack_propagate(False)
-            frame.configure(height=height)
-        frame.pack(fill="both", expand=expand, pady=(0, 12))
-
-        lbl_frame = tk.Frame(frame, bg=PANEL_BG)
-        lbl_frame.pack(fill="x", padx=10, pady=(6, 2))
-        tk.Label(lbl_frame, text=title, font=FONT_BOLD, fg=FG_DIM, bg=PANEL_BG).pack(side="left")
-        return frame
-
+    # ------------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------------
+ 
     def _build_ui(self):
         self.root.title("ATC Radio Transcriber")
-        
-        # Finestra ottimizzata per schermi di PC portatili
-        self.root.geometry("960x720") 
+        self.root.geometry("960x720")
         self.root.configure(bg=BG)
-        self.root.minsize(820, 500) 
+        self.root.minsize(820, 500)
 
         # HEADER
         header = tk.Frame(self.root, bg=BG, height=50)
@@ -309,12 +393,17 @@ class TranscriberGUI:
         controls = tk.Frame(self.root, bg=BG, height=50)
         controls.pack(fill="x", padx=20, pady=(0, 10))
 
-        # Pulsante unico combinato per AVVIA / STOP
-        self.toggle_btn = tk.Button(controls, text="▶  AVVIA", command=self._toggle_transcription,
-                                    bg=ACCENT_CYAN, fg="#04140a", activebackground="#00b8e6",
-                                    activeforeground="#04140a", font=FONT_BOLD, relief="flat", 
-                                    padx=18, pady=8, cursor="hand2", bd=0)
-        self.toggle_btn.pack(side="left")
+        self.start_btn = tk.Button(controls, text="▶  AVVIA", command=self._on_start,
+                                   bg=ACCENT_CYAN, fg="#04140a", activebackground="#00b8e6",
+                                   font=FONT_BOLD, relief="flat", padx=18, pady=8,
+                                   cursor="hand2", bd=0)
+        self.start_btn.pack(side="left")
+
+        self.stop_btn = tk.Button(controls, text="■  STOP", command=self._on_stop,
+                                  bg="#3a1418", fg=ACCENT_RED, activebackground="#54181d",
+                                  font=FONT_BOLD, relief="flat", padx=18, pady=8,
+                                  cursor="hand2", bd=0, state="disabled")
+        self.stop_btn.pack(side="left", padx=(10, 0))
 
         self.debug_btn = tk.Button(controls, text="🐞 DEBUG OFF", command=self._toggle_debug,
                                    bg="#2a2a2a", fg=FG_DIM, activebackground="#3d3d3d",
@@ -439,21 +528,19 @@ class TranscriberGUI:
         self.uptime_label = tk.Label(row, text="00:00:00", font=FONT_SMALL, fg=FG, bg=CARD_BG, anchor="w")
         self.uptime_label.pack(side="left")
 
-        # Metriche strutturate in verticale per riga sotto lo Stato Sistema
+        # Metriche (Posizionato ora in right_col sotto lo Stato Sistema)
         metrics_frame = self._card(right_col, "📈 METRICHE")
-        m_inner = tk.Frame(metrics_frame, bg=CARD_BG)
-        m_inner.pack(fill="both", expand=True, padx=8, pady=8)
-        
+        m_row = tk.Frame(metrics_frame, bg=CARD_BG)
+        m_row.pack(fill="x", padx=8, pady=8)
         self.metric_labels = {}
-        for key, label in [("submitted", "Inviati"), ("completed", "Completati"),
-                           ("failed", "Falliti"), ("avg_time", "T. Medio"),
-                           ("queue_size", "Coda")]:
-            row = tk.Frame(m_inner, bg=CARD_BG)
-            row.pack(fill="x", pady=3)
-            tk.Label(row, text=label + ":", font=FONT_SMALL, fg=FG_DIM, bg=CARD_BG,
-                     width=14, anchor="w").pack(side="left")
-            val = tk.Label(row, text="0", font=FONT_BOLD, fg=FG, bg=CARD_BG, anchor="w")
-            val.pack(side="left")
+        for key, label in [("submitted", "INVIATI"), ("completed", "COMPLETATI"),
+                           ("failed", "FALLITI"), ("avg_time", "T.MEDIO"),
+                           ("queue_size", "CODA")]:
+            col = tk.Frame(m_row, bg=CARD_BG)
+            col.pack(side="left", expand=True, fill="x")
+            tk.Label(col, text=label, font=FONT_SMALL, fg=FG_DIM, bg=CARD_BG).pack(anchor="w")
+            val = tk.Label(col, text="0", font=FONT_BOLD, fg=FG, bg=CARD_BG)
+            val.pack(anchor="w")
             self.metric_labels[key] = val
 
         # BARRA DI ERRORE
@@ -465,233 +552,416 @@ class TranscriberGUI:
         self._uptime_start = time.time()
         self._update_uptime()
 
-    def _sync_quick_config_labels(self):
-        """Sincronizza i widget informativi a destra con la configurazione corrente."""
-        if not hasattr(self, "quick_config_labels"):
-            return
-        w_cfg = self.config.get("whisper", {})
-        v_cfg = self.config.get("vad", {})
-        a_cfg = self.config.get("audio", {})
+    def _card(self, parent, title, expand=False, height=None):
+        frame = tk.Frame(parent, bg=PANEL_BG, highlightthickness=1,
+                         highlightbackground=BORDER, relief="flat")
+        if expand:
+            frame.pack(fill="both", expand=True, pady=4)
+        else:
+            frame.pack(fill="x", pady=4)
+        tk.Label(frame, text=title, font=FONT_SMALL, fg=FG_DIM,
+                 bg=PANEL_BG).pack(anchor="w", padx=10, pady=(6, 0))
+        return frame
 
-        self.quick_config_labels["Modello"].config(text=w_cfg.get("model", "whisper-large-v3"))
-        lang = w_cfg.get("language", "en").upper()
-        self.quick_config_labels["Lingua"].config(text=f"Inglese ({lang})" if lang == "EN" else f"Altro ({lang})")
-        self.quick_config_labels["VAD Sensibilità"].config(text=str(v_cfg.get("silence_timeout_s", 1.0)) + "s")
-        self.quick_config_labels["Worker Groq"].config(text=str(w_cfg.get("max_workers", 4)))
-
-        flt_active = a_cfg.get("filter_bandpass", True)
-        self._set_status_item("🔵 Filtro", "300-3400 Hz (ON)" if flt_active else "DISATTIVATO", flt_active)
-
-    def _set_status_item(self, label_key, text, active):
-        if label_key in self.status_items:
-            item = self.status_items[label_key]
-            item["label"].config(text=text)
-            color = ACCENT_GREEN if active else ACCENT_RED
-            item["canvas"].itemconfig(item["dot"], fill=color)
-            item["active"] = active
-
-    def _draw_vu(self, rms_normalized=0.0, threshold_normalized=0.4):
-        """Disegna il VU Meter sul Canvas."""
-        w = self.vu_canvas.winfo_width()
-        h = self.vu_canvas.winfo_height()
-        if w <= 10:
+    # ------------------------------------------------------------------------
+    # VU METER
+    # ------------------------------------------------------------------------
+    def _draw_vu(self):
+        c = self.vu_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w <= 1:
             return
 
-        self.vu_canvas.delete("all")
-        self.vu_canvas.create_rectangle(0, 0, w, h, fill="#05070a", outline="")
+        max_scale = max(self._last_threshold * 6, self._last_rms * 1.2, 200)
+        frac = min(1.0, self._last_rms / max_scale)
+        fill_w = int(w * frac)
 
-        bar_w = int(w * rms_normalized)
-        thresh_x = int(w * threshold_normalized)
+        if self._last_rms < self._last_threshold:
+            color = FG_DIM
+        elif frac < 0.6:
+            color = ACCENT_GREEN
+        elif frac < 0.85:
+            color = ACCENT_AMBER
+        else:
+            color = ACCENT_RED
 
-        bar_color = ACCENT_GREEN
-        if rms_normalized > threshold_normalized:
-            bar_color = ACCENT_AMBER
-        if rms_normalized > 0.85:
-            bar_color = ACCENT_RED
+        if fill_w > 0:
+            c.create_rectangle(0, 0, fill_w, h, fill=color, outline="")
 
-        if bar_w > 0:
-            self.vu_canvas.create_rectangle(0, 0, bar_w, h, fill=bar_color, outline="")
+        thr_frac = min(1.0, self._last_threshold / max_scale)
+        thr_x = int(w * thr_frac)
+        c.create_line(thr_x, 0, thr_x, h, fill=ACCENT_AMBER, width=2)
 
-        self.vu_canvas.create_line(thresh_x, 0, thresh_x, h, fill="#ffffff", width=2, dash=(4, 2))
+    # ------------------------------------------------------------------------
+    # GESTIONE STATI
+    # ------------------------------------------------------------------------
+    def _update_status_item(self, label, active, custom_text=None):
+        if label not in self.status_items:
+            return
+        item = self.status_items[label]
+        color = ACCENT_GREEN if active else ACCENT_RED
+        item["canvas"].itemconfig(item["dot"], fill=color)
+        item["active"] = active
+
+        if custom_text is not None:
+            text = custom_text
+        else:
+            text = "ATTIVO" if active else "DISATTIVO" if label == "🎤 Microfono" else "DISCONNESSA"
+        item["label"].config(text=text)
 
     def _update_uptime(self):
         if self.running:
             elapsed = int(time.time() - self._uptime_start)
-            hrs = elapsed // 3600
-            mins = (elapsed % 3600) // 60
-            secs = elapsed % 60
-            self.uptime_label.config(text=f"{hrs:02d}:{mins:02d}:{secs:02d}")
+            h = elapsed // 3600
+            m = (elapsed % 3600) // 60
+            s = elapsed % 60
+            self.uptime_label.config(text=f"{h:02d}:{m:02d}:{s:02d}")
         self.root.after(1000, self._update_uptime)
 
-    def _toggle_transcription(self):
-        if not self.running:
-            self._on_start()
-            self.toggle_btn.config(
-                text="■  STOP",
-                bg="#3a1418",
-                fg=ACCENT_RED,
-                activebackground="#54181d",
-                activeforeground=ACCENT_RED
-            )
+    # ------------------------------------------------------------------------
+    # FINESTRA DI CONFIGURAZIONE (chiama la classe)
+    # ------------------------------------------------------------------------
+    def _open_config_window(self):
+        if self.config_window is None or not self.config_window.window.winfo_exists():
+            self.config_window = ConfigWindow(self.root, self)
         else:
-            self._on_stop()
-            self.toggle_btn.config(
-                text="▶  AVVIA",
-                bg=ACCENT_CYAN,
-                fg="#04140a",
-                activebackground="#00b8e6",
-                activeforeground="#04140a"
-            )
+            self.config_window.window.lift()
 
+    # ------------------------------------------------------------------------
+    # RELOAD CONFIG
+    # ------------------------------------------------------------------------
+    def _reload_config(self):
+        """Ricarica config.json e applica le modifiche ai componenti attivi (VAD e filtro) senza riavviare."""
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception as e:
+            self.error_label.config(text=f"❌ Errore nel caricamento di config.json: {e}", fg=ACCENT_RED)
+            return
+
+        # Aggiorna il VAD se esiste
+        if self.vad is not None:
+            vad_cfg = config.get("vad", {})
+            try:
+                self.vad.aggressiveness = vad_cfg.get("aggressiveness", 1)
+                self.vad.silence_timeout_s = vad_cfg.get("silence_timeout_s", 1.0)
+                self.vad.max_utterance_s = vad_cfg.get("max_utterance_s", 15.0)
+                self.vad.min_segment_duration_s = vad_cfg.get("min_segment_duration_s", 0.6)
+                self.vad.activation_ratio = vad_cfg.get("activation_ratio", 0.4)
+                self.vad.vad.set_mode(self.vad.aggressiveness)
+                self.vad._update_buffers()
+                logging.getLogger("AudioTranscriber").info(
+                    "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f",
+                    self.vad.aggressiveness, self.vad.activation_ratio
+                )
+            except Exception as e:
+                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
+
+        # Aggiorna il Transcriber (filtro) se esiste
+        if self.transcriber is not None:
+            try:
+                filter_cfg = config.get("filter", {})
+                self.transcriber.apply_filter = filter_cfg.get("enabled", False)
+                self.transcriber.band_min = filter_cfg.get("band_min", 300)
+                self.transcriber.band_max = filter_cfg.get("band_max", 3400)
+                if self.transcriber.apply_filter and hasattr(self.transcriber, 'SCIPY_AVAILABLE') and self.transcriber.SCIPY_AVAILABLE:
+                    from scipy import signal
+                    self.transcriber._filter_b = signal.firwin(65, [self.transcriber.band_min, self.transcriber.band_max],
+                                                               fs=self.transcriber.rate, pass_zero=False)
+                    self.transcriber._filter_a = [1.0]
+                    logging.getLogger("AudioTranscriber").info(
+                        "Filtro aggiornato: enabled=%s, band=%d-%d Hz",
+                        self.transcriber.apply_filter, self.transcriber.band_min, self.transcriber.band_max
+                    )
+                else:
+                    logging.getLogger("AudioTranscriber").info("Filtro disabilitato o scipy non disponibile.")
+            except Exception as e:
+                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del filtro: {e}", fg=ACCENT_AMBER)
+
+        # Aggiorna la GUI
+        self._update_gui_from_config(config)
+
+        # Aggiorna il filtro nello stato sistema
+        filter_active = config.get("filter", {}).get("enabled", False)
+        filter_text = f"300-3400 Hz (ON)" if filter_active else "DISABILITATO"
+        self._update_status_item("🔵 Filtro", filter_active, filter_text)
+
+        self.error_label.config(text="✅ Configurazione ricaricata e applicata (VAD e filtro aggiornati).", fg=ACCENT_GREEN)
+        logging.getLogger("AudioTranscriber").info("Configurazione ricaricata e applicata.")
+
+    def _update_gui_from_config(self, config):
+        """Aggiorna le etichette della configurazione rapida e la modalità."""
+        groq_cfg = config.get("api", {}).get("groq", {})
+        mode = "RADIO (bypass VAD)" if config.get("radio", {}).get("bypass_vad") else "VAD classico"
+        self.mode_label.config(
+            text=f"Modello: {groq_cfg.get('model', '?')}   •   Modalità: {mode}"
+        )
+        self.quick_config_labels["Modello"].config(text=groq_cfg.get("model", "Whisper-large-v3"))
+        self.quick_config_labels["VAD Sensibilità"].config(text=str(config.get("vad", {}).get("activation_ratio", 0.4)))
+        self.quick_config_labels["Worker Groq"].config(text=str(groq_cfg.get("max_concurrent_requests", 5)))
+
+    # ------------------------------------------------------------------------
+    # AZIONI
+    # ------------------------------------------------------------------------
     def _on_start(self):
         if self.running:
             return
-        self.running = True
-        self.stop_event.clear()
-        self._uptime_start = time.time()
+        self.error_label.config(text="⏳ Avvio in corso...", fg=ACCENT_AMBER)
+        try:
+            config = load_config()
+        except SystemExit:
+            self.error_label.config(
+                text="❌ Errore: config.json non trovato o GROQ_API_KEY non impostata.",
+                fg=ACCENT_RED
+            )
+            return
 
-        self.status_dot.itemconfig(self._dot, fill=ACCENT_GREEN)
-        self.status_label.config(text="ASCOLTO", fg=ACCENT_GREEN)
-        self._set_status_item("🎤 Microfono", "ATTIVO", True)
-        self._set_status_item("🌐 Groq API", "PRONTA", True)
-        self.error_label.config(text="🎙️ Pipeline avviata in background...", fg=ACCENT_GREEN)
-
-        self.config_btn.config(state="disabled")
-        self.reload_btn.config(state="disabled")
-
-        self.pipeline_thread = threading.Thread(
-            target=run_pipeline,
-            args=(self.config, self.event_bus, self.stop_event),
-            daemon=True
+        groq_cfg = config.get("api", {}).get("groq", {})
+        mode = "RADIO (bypass VAD)" if config.get("radio", {}).get("bypass_vad") else "VAD classico"
+        self.mode_label.config(
+            text=f"Modello: {groq_cfg.get('model', '?')}   •   Modalità: {mode}"
         )
-        self.pipeline_thread.start()
+
+        self._update_status_item("🎤 Microfono", True, "ATTIVO")
+        self._update_status_item("🌐 Groq API", True, "CONNESSA")
+        filter_active = config.get("filter", {}).get("enabled", False)
+        filter_text = f"300-3400 Hz (ON)" if filter_active else "DISABILITATO"
+        self._update_status_item("🔵 Filtro", filter_active, filter_text)
+
+        self._uptime_start = time.time()
+        self.uptime_label.config(text="00:00:00")
+
+        if self.debug_enabled:
+            from logger import clear_log_file
+            clear_log_file()
+
+        from main import run_pipeline
+        from vad import VADProcessor
+        from transcriber import Transcriber
+        from audio import AudioCapture
+
+        self.vad = VADProcessor(
+            rate=config.get("audio", {}).get("rate", 16000),
+            frame_duration_ms=config.get("audio", {}).get("frame_duration_ms", 30),
+            aggressiveness=config.get("vad", {}).get("aggressiveness", 1),
+            silence_timeout_s=config.get("vad", {}).get("silence_timeout_s", 1.0),
+            max_utterance_s=config.get("vad", {}).get("max_utterance_s", 15.0),
+            min_segment_duration_s=config.get("vad", {}).get("min_segment_duration_s", 0.6),
+            activation_ratio=config.get("vad", {}).get("activation_ratio", 0.4)
+        )
+        self.transcriber = Transcriber(config)
+
+        self.stop_event = threading.Event()
+        self.worker = threading.Thread(
+            target=self._pipeline_thread, args=(config,), daemon=True
+        )
+        self.running = True
+        self.start_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self._set_status("IN ASCOLTO", ACCENT_GREEN)
+        self.worker.start()
+        self.error_label.config(text="🎤 Ascolto attivo...", fg=ACCENT_GREEN)
+
+    def _pipeline_thread(self, config):
+        try:
+            from main import run_pipeline
+            run_pipeline(config, event_bus=self.bus, stop_event=self.stop_event)
+        except Exception as e:
+            self.bus.emit("error", message=str(e))
+        finally:
+            self.bus.emit("stopped")
 
     def _on_stop(self):
         if not self.running:
             return
-        self.running = False
-        self.stop_event.set()
 
-        self.status_dot.itemconfig(self._dot, fill=FG_DIM)
-        self.status_label.config(text="FERMO", fg=FG_DIM)
-        self._set_status_item("🎤 Microfono", "DISATTIVO", False)
-        self._set_status_item("🌐 Groq API", "DISCONNESSA", False)
-        self.error_label.config(text="⏹️ Pipeline interrotta.", fg=FG_DIM)
-
-        self.config_btn.config(state="normal")
-        self.reload_btn.config(state="normal")
-        self._draw_vu(0.0, 0.4)
-        self.vu_value_label.config(text="RMS: -    Soglia: -")
-
-        # Richiesta di salvataggio a fine sessione
+        # Gestione trascrizione
         if self.transcript_buffer:
-            risposta = messagebox.askyesno(
-                "Salva Trascrizione", 
-                "Vuoi salvare la trascrizione di questa sessione su un file di testo?",
-                parent=self.root
-            )
-            if risposta:
-                file_path = filedialog.asksaveasfilename(
-                    defaultextension=".txt",
-                    filetypes=[("File di testo", "*.txt"), ("Tutti i file", "*.*")],
-                    title="Salva la trascrizione come...",
-                    parent=self.root
+            if messagebox.askyesno(
+                "Salva trascrizione",
+                f"Ci sono {len(self.transcript_buffer)} righe di trascrizione.\n"
+                "Vuoi salvarle in un file .txt?"
+            ):
+                filename = self._save_transcript_from_buffer()
+                if filename:
+                    self.error_label.config(
+                        text=f"✅ Trascrizione salvata in: {filename}",
+                        fg=ACCENT_GREEN
+                    )
+                else:
+                    self.error_label.config(
+                        text="❌ Errore durante il salvataggio della trascrizione.",
+                        fg=ACCENT_RED
+                    )
+            else:
+                self._clear_transcript_buffer()
+                self.error_label.config(
+                    text="ℹ️ Trascrizione scartata.",
+                    fg=ACCENT_AMBER
                 )
-                if file_path:
-                    try:
-                        with open(file_path, "w", encoding="utf-8") as f:
-                            f.write("\n".join(self.transcript_buffer))
-                        self.error_label.config(text=f"💾 Trascrizione salvata in: {os.path.basename(file_path)}", fg=ACCENT_GREEN)
-                    except Exception as e:
-                        messagebox.showerror("Errore di Salvataggio", f"Impossibile salvare il file:\n{e}", parent=self.root)
-            
-            # Reset del buffer per la sessione successiva
-            self.transcript_buffer = []
+        else:
+            self.error_label.config(
+                text="ℹ️ Nessuna trascrizione da salvare.",
+                fg=FG_DIM
+            )
 
+        # Gestione debug log
+        if self.debug_enabled:
+            import os
+            from logger import archive_log_file, clear_log_file
+            log_file = "transcriber.log"
+            has_content = False
+            if os.path.exists(log_file) and os.path.getsize(log_file) > 0:
+                has_content = True
+
+            if has_content:
+                if messagebox.askyesno(
+                    "Salva log di debug",
+                    "Il file transcriber.log contiene messaggi di debug.\n"
+                    "Vuoi salvarlo (con timestamp) o eliminarlo?"
+                ):
+                    new_name = archive_log_file()
+                    if new_name:
+                        self.error_label.config(
+                            text=f"✅ Log di debug salvati in: {new_name}",
+                            fg=ACCENT_GREEN
+                        )
+                    else:
+                        self.error_label.config(
+                            text="❌ Errore durante il salvataggio dei log.",
+                            fg=ACCENT_RED
+                        )
+                else:
+                    if clear_log_file():
+                        self.error_label.config(
+                            text="ℹ️ Log di debug eliminati.",
+                            fg=ACCENT_AMBER
+                        )
+                    else:
+                        self.error_label.config(
+                            text="⚠️ Impossibile eliminare il file di log.",
+                            fg=ACCENT_RED
+                        )
+            else:
+                self.error_label.config(
+                    text="ℹ️ Nessun messaggio di debug da salvare.",
+                    fg=FG_DIM
+                )
+
+        self.stop_event.set()
+        self.stop_btn.config(state="disabled")
+        self._set_status("FERMO", FG_DIM)
+        self.error_label.config(text="⏹️ Trascrizione terminata.", fg=FG_DIM)
+
+    def _save_transcript_from_buffer(self, filename=None):
+        if not self.transcript_buffer:
+            return None
+        if filename is None:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"transcript_{timestamp}.txt"
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("\n".join(self.transcript_buffer))
+            return filename
+        except Exception:
+            return None
+
+    def _clear_transcript_buffer(self):
+        self.transcript_buffer = []
+        self.transcript.config(state="normal")
+        self.transcript.delete("1.0", "end")
+        self.transcript.config(state="disabled")
+
+    def _set_status(self, text, color):
+        self.status_label.config(text=text, fg=color)
+        self.status_dot.itemconfig(self._dot, fill=color)
+
+    # ------------------------------------------------------------------------
+    # DEBUG TOGGLE
+    # ------------------------------------------------------------------------
     def _toggle_debug(self):
         self.debug_enabled = not self.debug_enabled
         if self.debug_enabled:
-            self.debug_btn.config(text="🐞 DEBUG ON", fg=ACCENT_AMBER, bg="#332510")
-            if not self.debug_window or not self.debug_window.is_open:
-                self.debug_window = DebugWindow(self.root)
+            self.debug_btn.config(text="🐞 DEBUG ON", bg=ACCENT_AMBER, fg="#14100a")
+            logging.getLogger("AudioTranscriber").setLevel(logging.DEBUG)
+            self.debug_window = DebugWindow(self.root)
+            self.error_label.config(text="🐞 Modalità DEBUG attiva. I log verranno gestiti allo stop.", fg=ACCENT_AMBER)
         else:
-            self.debug_btn.config(text="🐞 DEBUG OFF", fg=FG_DIM, bg="#2a2a2a")
+            self.debug_btn.config(text="🐞 DEBUG OFF", bg="#2a2a2a", fg=FG_DIM)
+            logging.getLogger("AudioTranscriber").setLevel(logging.INFO)
             if self.debug_window:
                 self.debug_window.on_close()
                 self.debug_window = None
 
-    def _open_config_window(self):
-        if self.config_window and tk.Toplevel.winfo_exists(self.config_window.window):
-            self.config_window.window.lift()
-            return
-        self.config_window = ConfigWindow(self.root, self.config, self._on_config_saved)
+            import os
+            from logger import archive_log_file, clear_log_file
+            log_file = "transcriber.log"
+            has_content = False
+            if os.path.exists(log_file) and os.path.getsize(log_file) > 0:
+                has_content = True
 
-    def _on_config_saved(self, new_config):
-        self.config = new_config
-        from config import CONFIG_PATH
-        try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(new_config, f, indent=4)
-            self.error_label.config(text="💾 Nuova configurazione salvata e applicata.", fg=ACCENT_GREEN)
-            self._sync_quick_config_labels()
-        except Exception as e:
-            messagebox.showerror("Errore di Salvataggio", f"Impossibile scrivere il file:\n{e}")
+            if has_content:
+                if messagebox.askyesno(
+                    "Salva log di debug",
+                    "Ci sono messaggi di debug in sospeso.\n"
+                    "Vuoi salvarli prima di disattivare il debug?"
+                ):
+                    new_name = archive_log_file()
+                    if new_name:
+                        self.error_label.config(
+                            text=f"✅ Log di debug salvati in: {new_name}",
+                            fg=ACCENT_GREEN
+                        )
+                    else:
+                        self.error_label.config(
+                            text="❌ Errore durante il salvataggio.",
+                            fg=ACCENT_RED
+                        )
+                else:
+                    clear_log_file()
+                    self.error_label.config(
+                        text="ℹ️ Log di debug eliminati.",
+                        fg=ACCENT_AMBER
+                    )
+            self.error_label.config(text="🐞 Debug disattivato.", fg=FG_DIM)
 
-    def _reload_config(self):
-        try:
-            self.config = load_config()
-            self._sync_quick_config_labels()
-            self.error_label.config(text="🔄 Configurazione ricaricata dal file JSON.", fg=ACCENT_GREEN)
-        except Exception as e:
-            messagebox.showerror("Errore di Ricaricamento", f"Impossibile ricaricare:\n{e}")
-
+    # ------------------------------------------------------------------------
+    # POLLING EVENTI
+    # ------------------------------------------------------------------------
     def _poll_events(self):
-        """Raccoglie i messaggi di log e gli eventi thread-safe dall'EventBus."""
-        if self.debug_enabled and self.debug_window and self.debug_window.is_open:
-            from logger import _debug_buffer, _buffer_lock
-            logs_to_print = []
-            with _buffer_lock:
-                if _debug_buffer:
-                    logs_to_print = list(_debug_buffer)
-                    _debug_buffer.clear()
-            for record in logs_to_print:
-                self.debug_window.append_log(f"[{record.asctime}] {record.levelname}: {record.message}")
-
-        events = self.event_bus.poll_all()
-        for kind, data in events:
-            if kind == "transcript":
-                self._append_transcript(data.get("text", ""))
-            elif kind == "metrics":
-                for k, val in self.metric_labels.items():
-                    if k in data:
-                        if k == "avg_time":
-                            val.config(text=f"{data[k]:.2f}s")
-                        else:
-                            val.config(text=str(data[k]))
-            elif kind == "vu_meter":
-                rms = data.get("rms", 0.0)
-                thresh = data.get("threshold", 0.4)
-                db = data.get("db", -60.0)
-                db_th = data.get("db_threshold", -35.0)
-                self._draw_vu(rms, thresh)
-                self.vu_value_label.config(text=f"RMS: {db:.1f} dB  (Soglia: {db_th:.1f} dB)")
-            elif kind == "status":
-                self.error_label.config(text=data.get("message", ""), fg=FG)
-            elif kind == "pipeline_error":
-                self.error_label.config(text=f"❌ Errore: {data.get('message', '')}", fg=ACCENT_RED)
-                self.running = False
-                self.toggle_btn.config(
-                    text="▶  AVVIA",
-                    bg=ACCENT_CYAN,
-                    fg="#04140a",
-                    activebackground="#00b8e6",
-                    activeforeground="#04140a"
+        for kind, data in self.bus.poll_all():
+            if kind == "rms":
+                self._last_rms = data.get("value", 0.0)
+                self._last_threshold = data.get("threshold", self._last_threshold)
+                accepted = data.get("accepted", True)
+                accepted_label = "● ACCETTATO" if accepted else "○ SILENZIO (scartato)"
+                self.vu_value_label.config(
+                    text=f"RMS: {self._last_rms:.1f}    Soglia: {self._last_threshold:.1f}    {accepted_label}",
+                    fg=ACCENT_GREEN if accepted else FG_DIM
                 )
-                self.status_dot.itemconfig(self._dot, fill=ACCENT_RED)
-                self.status_label.config(text="ERRORE", fg=ACCENT_RED)
-                self._set_status_item("🎤 Microfono", "DISATTIVO", False)
-                self._set_status_item("🌐 Groq API", "DISCONNESSA", False)
-
+                self._draw_vu()
+            elif kind == "transcript":
+                self._append_transcript(data.get("text"))
+            elif kind == "metrics":
+                for key in ("submitted", "completed", "failed", "queue_size"):
+                    if key in data:
+                        self.metric_labels[key].config(text=str(data[key]))
+                if "avg_time" in data:
+                    self.metric_labels["avg_time"].config(text=f"{data['avg_time']:.2f}s")
+            elif kind == "error":
+                self.error_label.config(text=f"❌ Errore: {data.get('message', '')}", fg=ACCENT_RED)
+                self._update_status_item("🌐 Groq API", False, "ERRORE")
+            elif kind == "stopped":
+                self.running = False
+                self.start_btn.config(state="normal")
+                self.stop_btn.config(state="disabled")
+                self._set_status("FERMO", FG_DIM)
+                self._update_status_item("🎤 Microfono", False, "DISATTIVO")
+                self._update_status_item("🌐 Groq API", False, "DISCONNESSA")
+                self.error_label.config(text="⏹️ Trascrizione terminata.", fg=FG_DIM)
         self.root.after(100, self._poll_events)
 
     def _append_transcript(self, text):
@@ -699,7 +969,6 @@ class TranscriberGUI:
         ts = time.strftime("%H:%M:%S")
         self.transcript.insert("end", f"[{ts}] ", "ts")
         if text:
-            # NOTA: Corretto in '\n' per permettere a Tkinter di stampare a schermo
             self.transcript.insert("end", f"{text}\n")
         else:
             self.transcript.insert("end", "(nessun testo riconosciuto)\n", "dim")
@@ -708,6 +977,9 @@ class TranscriberGUI:
         if text:
             self.transcript_buffer.append(f"[{ts}] {text}")
 
+    # ------------------------------------------------------------------------
+    # CHIUSURA
+    # ------------------------------------------------------------------------
     def on_close(self):
         if self.running:
             self.stop_event.set()
@@ -724,6 +996,7 @@ class TranscriberGUI:
 def main():
     root = tk.Tk()
     app = TranscriberGUI(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
 
 
