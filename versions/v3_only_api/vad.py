@@ -10,13 +10,13 @@ class VADProcessor:
 
     def __init__(
         self,
-        rate=16000,
-        frame_duration_ms=30,
-        aggressiveness=2,
-        silence_timeout_s=1.2,
-        max_utterance_s=20.0,
-        min_segment_duration_s=1.2,
-        activation_ratio=0.6
+        rate=16000,                    # campioni al secondo (16kHz)
+        frame_duration_ms=30,          # durata di ogni frame audio in millisecondi
+        aggressiveness=2,              # sensibilità del VAD (0=più permissivo, 3=più aggressivo)
+        silence_timeout_s=1.2,         # quanto silenzio serve per chiudere un segmento
+        max_utterance_s=20.0,          # durata massima di un segmento (taglio forzato)
+        min_segment_duration_s=1.2,    # durata minima per considerare il segmento valido
+        activation_ratio=0.6           # % di frame vocali per attivare il segmento
     ):
         self.rate = rate
         self.frame_duration_ms = frame_duration_ms
@@ -28,28 +28,28 @@ class VADProcessor:
 
         self.triggered = False
 
-        self.ring_buffer = None
+        self.ring_buffer = None          # serve a ricordare gli ultimi ~300ms di audio prima che inizi il parlato per non perdere l'inizio della frase
         self.ring_buffer_maxlen = 0
-        self._voiced_count = 0
-        self.ring_buffer_silence = None
+        self._voiced_count = 0           # tiene traccia di quanti frame con voce ci sono in questo buffer
+        self.ring_buffer_silence = None  # serve a decidere quando finisce il parlato
         self.silence_ring_maxlen = 0
-        self._unvoiced_count = 0
+        self._unvoiced_count = 0        # tiene traccia di quanti frame senza voce ci sono in questo buffer
         self.max_voiced_frames = 0
-        self.frame_samples = int(rate * frame_duration_ms / 1000)
+        self.frame_samples = int(rate * frame_duration_ms / 1000)    # quanti campioni audio ci sono in un singolo frame   
         self._voiced_capacity = 0
         self._voiced_buffer = None
         self._voiced_write_pos = 0
         self._voiced_frame_count = 0
 
         self.on_transcription_ready = None
-
         self._update_buffers()
 
         logger.debug("VAD inizializzato: rate=%d, aggressiveness=%d, activation_ratio=%.2f",
                      rate, aggressiveness, activation_ratio)
 
     def _update_buffers(self):
-        num_padding_frames = int(300 / self.frame_duration_ms)
+        """Inizializza i buffer"""
+        num_padding_frames = int(300 / self.frame_duration_ms)      #calcola quanti frame audio servono per coprire 300 millisecondi
         self.ring_buffer_maxlen = num_padding_frames
         self.ring_buffer = collections.deque(maxlen=num_padding_frames)
         self._voiced_count = 0
@@ -69,6 +69,7 @@ class VADProcessor:
         self.on_transcription_ready = callback
 
     def _append_voiced_frame(self, frame_bytes):
+        """Scrive un frame audio (un blocco di 30ms) nel buffer principale del parlato"""
         samples = np.frombuffer(frame_bytes, dtype=np.int16)
         n = len(samples)
         start = self._voiced_write_pos

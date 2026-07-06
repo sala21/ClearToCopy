@@ -12,14 +12,14 @@ class AudioCapture:
         self.stream = None
         self.is_running = False
 
-    def _callback(self, in_data, frame_count, time_info, status):
+    def _callback(self, in_data):
         """Callback per PyAudio."""
         try:
             if self.audio_queue.qsize() < self.audio_queue.maxsize:
                 self.audio_queue.put(in_data)
         except queue.Full:
             pass
-        return (None, pyaudio.paContinue)
+        return (None, pyaudio.paContinue)  # (Output data = None perchè uso solo in input, flag = continue streaming)
 
     def start(self):
         """Avvia lo stream audio."""
