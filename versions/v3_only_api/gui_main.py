@@ -112,7 +112,6 @@ class ConfigWindow:
 
         self.config_path = os.path.join(os.path.dirname(__file__), "config.json")
         self.config_data = self._load_config()
-
         self.entries = {}
         self._build_ui()
 
@@ -130,6 +129,7 @@ class ConfigWindow:
         tk.Label(main_frame, text="Modifica Configurazione", font=TITLE_FONT,
                  fg=ACCENT_CYAN, bg=BG).pack(anchor="w", pady=(0, 15))
 
+        # Canvas con scroll
         canvas = tk.Canvas(main_frame, bg=BG, highlightthickness=0)
         scrollbar = tk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = tk.Frame(canvas, bg=BG)
@@ -142,84 +142,97 @@ class ConfigWindow:
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True, pady=(0, 15))
+        scrollbar.pack(side="right", fill="y", pady=(0, 15))
+
+        # Configura le colonne del frame scrollabile
+        scrollable_frame.grid_columnconfigure(0, weight=0, minsize=200)
+        scrollable_frame.grid_columnconfigure(1, weight=1)
+
+        row = 0
 
         # --- Sezione VAD ---
-        vad_frame = self._config_section(scrollable_frame, "Voice Activity Detection (VAD)")
+        lbl_section = tk.Label(scrollable_frame, text="Voice Activity Detection (VAD)",
+                               font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
+        lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+        row += 1
+
         vad_params = [
-            ("aggressiveness", "Aggressiveness (0-3)", "vad", "aggressiveness"),
-            ("silence_timeout_s", "Silence timeout (s)", "vad", "silence_timeout_s"),
-            ("max_utterance_s", "Max utterance (s)", "vad", "max_utterance_s"),
-            ("min_segment_duration_s", "Min segment duration (s)", "vad", "min_segment_duration_s"),
-            ("activation_ratio", "Activation ratio (0-1)", "vad", "activation_ratio"),
+            ("aggressiveness", "Aggressiveness (0-3)", self.config_data.get("vad", {}).get("aggressiveness", 1)),
+            ("silence_timeout_s", "Silence timeout (s)", self.config_data.get("vad", {}).get("silence_timeout_s", 1.0)),
+            ("max_utterance_s", "Max utterance (s)", self.config_data.get("vad", {}).get("max_utterance_s", 15.0)),
+            ("min_segment_duration_s", "Min segment duration (s)", self.config_data.get("vad", {}).get("min_segment_duration_s", 0.6)),
+            ("activation_ratio", "Activation ratio (0-1)", self.config_data.get("vad", {}).get("activation_ratio", 0.4)),
         ]
-        for key, label, section, subkey in vad_params:
-            self.entries[key] = self._config_row(vad_frame, label, self.config_data.get(section, {}).get(subkey, ""))
+        for key, label, default_value in vad_params:
+            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
+            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+                             insertbackground=FG, relief="flat", bd=0)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.insert(0, str(default_value))
+            self.entries[key] = entry
+            row += 1
 
         # --- Sezione Filtro ---
-        filter_frame = self._config_section(scrollable_frame, "Filtro Passa-Banda")
+        lbl_section = tk.Label(scrollable_frame, text="Filtro Passa-Banda",
+                               font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
+        lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+        row += 1
+
         filter_params = [
-            ("filter_enabled", "Abilitato (true/false)", "filter", "enabled"),
-            ("band_min", "Band min (Hz)", "filter", "band_min"),
-            ("band_max", "Band max (Hz)", "filter", "band_max"),
+            ("filter_enabled", "Abilitato (true/false)", self.config_data.get("filter", {}).get("enabled", True)),
+            ("band_min", "Band min (Hz)", self.config_data.get("filter", {}).get("band_min", 300)),
+            ("band_max", "Band max (Hz)", self.config_data.get("filter", {}).get("band_max", 3400)),
         ]
-        for key, label, section, subkey in filter_params:
-            self.entries[key] = self._config_row(filter_frame, label, self.config_data.get(section, {}).get(subkey, ""))
+        for key, label, default_value in filter_params:
+            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
+            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+                             insertbackground=FG, relief="flat", bd=0)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.insert(0, str(default_value))
+            self.entries[key] = entry
+            row += 1
 
         # --- Sezione API Groq ---
-        api_frame = self._config_section(scrollable_frame, "API Groq")
+        lbl_section = tk.Label(scrollable_frame, text="API Groq",
+                               font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
+        lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+        row += 1
+
         api_params = [
-            ("model", "Modello", "api", "groq", "model"),
-            ("timeout_s", "Timeout (s)", "api", "groq", "timeout_s"),
-            ("max_concurrent_requests", "Max concurrent requests", "api", "groq", "max_concurrent_requests"),
-            ("use_flac", "Usa FLAC (true/false)", "api", "groq", "use_flac"),
+            ("model", "Modello", self.config_data.get("api", {}).get("groq", {}).get("model", "whisper-large-v3")),
+            ("timeout_s", "Timeout (s)", self.config_data.get("api", {}).get("groq", {}).get("timeout_s", 10)),
+            ("max_concurrent_requests", "Max concurrent requests", self.config_data.get("api", {}).get("groq", {}).get("max_concurrent_requests", 5)),
+            ("use_flac", "Usa FLAC (true/false)", self.config_data.get("api", {}).get("groq", {}).get("use_flac", True)),
         ]
-        for key, label, section, subsection, subkey in api_params:
-            val = self.config_data.get(section, {}).get(subsection, {}).get(subkey, "")
-            self.entries[key] = self._config_row(api_frame, label, val)
+        for key, label, default_value in api_params:
+            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
+            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+                             insertbackground=FG, relief="flat", bd=0)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.insert(0, str(default_value))
+            self.entries[key] = entry
+            row += 1
 
-        # === PULSANTI (APPLICA in alto, OK sotto, entrambi centrati) ===
+        # --- Pulsanti distanziati (Applicata Soluzione 1) ---
         btn_container = tk.Frame(main_frame, bg=BG)
-        btn_container.pack(fill="x", pady=(15, 0))
-
-        # Configura 3 colonne: sinistra (peso 1), centro (peso 0), destra (peso 1)
+        # padx=30 introduce lo spazio a sinistra e a destra (staccandosi dalla scrollbar)
+        btn_container.pack(fill="x", pady=(15, 5), padx=30) 
+        
         btn_container.grid_columnconfigure(0, weight=1)
         btn_container.grid_columnconfigure(1, weight=0)
         btn_container.grid_columnconfigure(2, weight=1)
 
-        # Prima riga: APPLICA (centrato)
         tk.Button(btn_container, text="🔄 APPLICA", command=self._apply_config,
-                bg=ACCENT_CYAN, fg="#04140a", font=FONT_BOLD, relief="flat", padx=20, pady=8, cursor="hand2").grid(row=0, column=1, pady=(0, 5))
+                  bg=ACCENT_CYAN, fg="#04140a", font=FONT_BOLD, relief="flat",
+                  padx=20, pady=8, cursor="hand2").grid(row=0, column=1, pady=(0, 10))
 
-        # Seconda riga: OK (centrato)
         tk.Button(btn_container, text="✅ OK", command=self._save_and_close,
-                bg=ACCENT_GREEN, fg="#04140a", font=FONT_BOLD, relief="flat", padx=20, pady=8, cursor="hand2").grid(row=1, column=1, pady=(0, 0))
-    
-    
-    def _config_section(self, parent, title):
-        frame = tk.Frame(parent, bg=PANEL_BG, highlightthickness=1, highlightbackground=BORDER)
-        frame.pack(fill="x", pady=6)
-        tk.Label(frame, text=title, font=FONT_SMALL, fg=FG_DIM, bg=PANEL_BG).pack(anchor="w", padx=10, pady=(6, 2))
-        return frame
-
-    def _config_row(self, parent, label_text, default_value):
-        """Crea una riga con label a sinistra e entry a destra, allineate."""
-        row = tk.Frame(parent, bg=PANEL_BG)
-        row.pack(fill="x", padx=10, pady=3)
-
-        # Label (larghezza fissa per allineamento)
-        lbl = tk.Label(row, text=label_text, font=FONT, fg=FG, bg=PANEL_BG,
-                    width=25, anchor="w")
-        lbl.pack(side="left", padx=(0, 10))
-
-        # Entry (si espande per riempire lo spazio rimanente)
-        entry = tk.Entry(row, font=FONT, bg="#05070a", fg=FG,
-                        insertbackground=FG, relief="flat", bd=0)
-        entry.insert(0, str(default_value))
-        entry.pack(side="left", fill="x", expand=True)
-
-        return entry
+                  bg=ACCENT_GREEN, fg="#04140a", font=FONT_BOLD, relief="flat",
+                  padx=20, pady=8, cursor="hand2").grid(row=1, column=1, pady=(0, 0))
 
     def _get_patch_from_entries(self):
         return {
@@ -322,22 +335,6 @@ class ConfigWindow:
 
     def on_close(self):
         self.window.destroy()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ============================================================================
 # APPLICAZIONE PRINCIPALE
 # ============================================================================
