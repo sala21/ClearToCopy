@@ -366,9 +366,10 @@ class TranscriberGUI:
     # ------------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------------
+ 
     def _build_ui(self):
         self.root.title("ATC Radio Transcriber")
-        self.root.geometry("960x660")
+        self.root.geometry("960x960")
         self.root.configure(bg=BG)
         self.root.minsize(820, 540)
 
@@ -411,7 +412,7 @@ class TranscriberGUI:
         self.debug_btn.pack(side="left", padx=(10, 0))
 
         self.config_btn = tk.Button(controls, text="⚙️ CONFIG", command=self._open_config_window,
-                                   bg="#2a2a2a", fg=FG_DIM, activebackground="#3d3d3d",
+                                   bg="#2a2a2a", fg=ACCENT_GREEN, activebackground="#3d3d3d",
                                    font=FONT_BOLD, relief="flat", padx=10, pady=8,
                                    cursor="hand2", bd=0)
         self.config_btn.pack(side="left", padx=(10, 0))
@@ -463,21 +464,6 @@ class TranscriberGUI:
         self.transcript.pack(fill="both", expand=True, padx=8, pady=8)
         self.transcript.tag_configure("dim", foreground=FG_DIM)
         self.transcript.tag_configure("ts", foreground=FG_DIM)
-
-        # Metriche
-        metrics_frame = self._card(left_col, "📈 METRICHE")
-        m_row = tk.Frame(metrics_frame, bg=CARD_BG)
-        m_row.pack(fill="x", padx=8, pady=8)
-        self.metric_labels = {}
-        for key, label in [("submitted", "INVIATI"), ("completed", "COMPLETATI"),
-                           ("failed", "FALLITI"), ("avg_time", "T.MEDIO"),
-                           ("queue_size", "CODA")]:
-            col = tk.Frame(m_row, bg=CARD_BG)
-            col.pack(side="left", expand=True, fill="x")
-            tk.Label(col, text=label, font=FONT_SMALL, fg=FG_DIM, bg=CARD_BG).pack(anchor="w")
-            val = tk.Label(col, text="0", font=FONT_BOLD, fg=FG, bg=CARD_BG)
-            val.pack(anchor="w")
-            self.metric_labels[key] = val
 
         # COLONNA DESTRA (30%)
         right_col = tk.Frame(main_panel, bg=BG, width=260)
@@ -541,6 +527,21 @@ class TranscriberGUI:
                  width=14, anchor="w").pack(side="left")
         self.uptime_label = tk.Label(row, text="00:00:00", font=FONT_SMALL, fg=FG, bg=CARD_BG, anchor="w")
         self.uptime_label.pack(side="left")
+
+        # Metriche (Posizionato ora in right_col sotto lo Stato Sistema)
+        metrics_frame = self._card(right_col, "📈 METRICHE")
+        m_row = tk.Frame(metrics_frame, bg=CARD_BG)
+        m_row.pack(fill="x", padx=8, pady=8)
+        self.metric_labels = {}
+        for key, label in [("submitted", "INVIATI"), ("completed", "COMPLETATI"),
+                           ("failed", "FALLITI"), ("avg_time", "T.MEDIO"),
+                           ("queue_size", "CODA")]:
+            col = tk.Frame(m_row, bg=CARD_BG)
+            col.pack(side="left", expand=True, fill="x")
+            tk.Label(col, text=label, font=FONT_SMALL, fg=FG_DIM, bg=CARD_BG).pack(anchor="w")
+            val = tk.Label(col, text="0", font=FONT_BOLD, fg=FG, bg=CARD_BG)
+            val.pack(anchor="w")
+            self.metric_labels[key] = val
 
         # BARRA DI ERRORE
         self.error_label = tk.Label(self.root, text="✅ Sistema pronto",

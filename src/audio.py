@@ -12,7 +12,7 @@ class AudioCapture:
         self.stream = None
         self.is_running = False
 
-    def _callback(self, in_data):
+    def _callback(self, in_data, frame_count, time_info, status):
         """Callback per PyAudio."""
         try:
             if self.audio_queue.qsize() < self.audio_queue.maxsize:
