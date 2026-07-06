@@ -19,8 +19,7 @@ __pycache__/
 # ==========================================
 *.log
 transcriber.log
-transcript_autosave.txt
-
+transcript_*.txt
 
 # ==========================================
 # IDE e editor
