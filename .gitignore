@@ -15,10 +15,11 @@ __pycache__/
 *.so
 
 # ==========================================
-# File di log (contengono dati sensibili!)
+# File di log e di trascrizione (Dati sensibili)
 # ==========================================
 *.log
 transcriber.log
+transcript_autosave.txt
 
 
 # ==========================================
