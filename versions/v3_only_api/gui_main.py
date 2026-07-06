@@ -395,9 +395,15 @@ class TranscriberGUI:
         # Aggiorna stati: Microfono e API attivi (verde)
         self._update_status_item("🎤 Microfono", True, "ATTIVO")
         self._update_status_item("🌐 Groq API", True, "CONNESSA")
+
         # Resetta il contatore dell'uptime
         self._uptime_start = time.time()
         self.uptime_label.config(text="00:00:00")
+
+        # Resetta il file di log all'avvio (se debug attivo)
+        if self.debug_enabled:
+            from logger import clear_log_file
+            clear_log_file()
 
         self.stop_event = threading.Event()
         self.worker = threading.Thread(
@@ -422,6 +428,53 @@ class TranscriberGUI:
         if not self.running:
             return
 
+        # --- Se debug è attivo, gestisci il file di log ---
+        if self.debug_enabled:
+            from logger import archive_log_file, clear_log_file
+            # Controlla se il file esiste e ha contenuto
+            import os
+            log_file = "transcriber.log"
+            has_content = False
+            if os.path.exists(log_file) and os.path.getsize(log_file) > 0:
+                has_content = True
+
+            if has_content:
+                if messagebox.askyesno(
+                    "Salva log di debug",
+                    "Il file transcriber.log contiene messaggi di debug.\n"
+                    "Vuoi salvarlo (con timestamp) o eliminarlo?"
+                ):
+                    # SALVA: rinomina il file
+                    new_name = archive_log_file()
+                    if new_name:
+                        self.error_label.config(
+                            text=f"✅ Log di debug salvati in: {new_name}",
+                            fg=ACCENT_GREEN
+                        )
+                    else:
+                        self.error_label.config(
+                            text="❌ Errore durante il salvataggio dei log.",
+                            fg=ACCENT_RED
+                        )
+                else:
+                    # NON SALVA: cancella il file
+                    if clear_log_file():
+                        self.error_label.config(
+                            text="ℹ️ Log di debug eliminati.",
+                            fg=ACCENT_AMBER
+                        )
+                    else:
+                        self.error_label.config(
+                            text="⚠️ Impossibile eliminare il file di log.",
+                            fg=ACCENT_RED
+                        )
+            else:
+                self.error_label.config(
+                    text="ℹ️ Nessun messaggio di debug da salvare.",
+                    fg=FG_DIM
+                )
+
+        # --- Salva la trascrizione (come prima) ---
         if messagebox.askyesno("Salva trascrizione", "Vuoi salvare la trascrizione in un file .txt?"):
             self._save_transcript()
         else:
@@ -465,7 +518,7 @@ class TranscriberGUI:
             import logging
             logging.getLogger("AudioTranscriber").setLevel(logging.DEBUG)
             self.debug_window = DebugWindow(self.root)
-            self.error_label.config(text="🐞 Modalità DEBUG attiva.", fg=ACCENT_AMBER)
+            self.error_label.config(text="🐞 Modalità DEBUG attiva. I log verranno gestiti allo stop.", fg=ACCENT_AMBER)
         else:
             self.debug_btn.config(text="🐞 DEBUG OFF", bg="#2a2a2a", fg=FG_DIM)
             import logging
@@ -473,6 +526,38 @@ class TranscriberGUI:
             if self.debug_window:
                 self.debug_window.on_close()
                 self.debug_window = None
+
+            # Se disattivi il debug, chiedi se salvare il file di log
+            import os
+            from logger import archive_log_file, clear_log_file
+            log_file = "transcriber.log"
+            has_content = False
+            if os.path.exists(log_file) and os.path.getsize(log_file) > 0:
+                has_content = True
+
+            if has_content:
+                if messagebox.askyesno(
+                    "Salva log di debug",
+                    "Ci sono messaggi di debug in sospeso.\n"
+                    "Vuoi salvarli prima di disattivare il debug?"
+                ):
+                    new_name = archive_log_file()
+                    if new_name:
+                        self.error_label.config(
+                            text=f"✅ Log di debug salvati in: {new_name}",
+                            fg=ACCENT_GREEN
+                        )
+                    else:
+                        self.error_label.config(
+                            text="❌ Errore durante il salvataggio.",
+                            fg=ACCENT_RED
+                        )
+                else:
+                    clear_log_file()
+                    self.error_label.config(
+                        text="ℹ️ Log di debug eliminati.",
+                        fg=ACCENT_AMBER
+                    )
             self.error_label.config(text="🐞 Debug disattivato.", fg=FG_DIM)
 
     # ------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import sys
 import json
 import os
 
+
 # =============================================
 # CARICA CONFIGURAZIONE PER IL DEBUG
 # =============================================
@@ -18,8 +19,35 @@ try:
         config = json.load(f)
         debug_config.update(config.get("debug", {}))
 except Exception:
-    # Se il file non esiste o non contiene la sezione debug, usa i default
     pass
+
+# =============================================
+# FUNZIONI PER LA GESTIONE DEL FILE DI LOG
+# =============================================
+LOG_FILE = "transcriber.log"
+
+def archive_log_file():
+    """Rinomina il file di log con timestamp e restituisce il nuovo nome."""
+    if not os.path.exists(LOG_FILE):
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    new_name = f"debug_{timestamp}.log"
+    try:
+        os.rename(LOG_FILE, new_name)
+        return new_name
+    except Exception as e:
+        return None
+
+def clear_log_file():
+    """Svuota il file di log (cancella il contenuto)."""
+    if os.path.exists(LOG_FILE):
+        try:
+            with open(LOG_FILE, "w", encoding="utf-8") as f:
+                f.write("")
+            return True
+        except Exception:
+            return False
+    return False
 
 # =============================================
 # CONFIGURAZIONE DEL LOGGER
