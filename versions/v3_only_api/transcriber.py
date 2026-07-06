@@ -13,16 +13,13 @@ from logger import get_logger
 
 logger = get_logger()
 
+# Tentativo di importare scipy per il filtro
 try:
     from scipy import signal
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
 
-# Prompt dettagliato: orienta Whisper su fraseologia, callsign e terminologia
-# ATC. Un prompt generico ("Transcription of aviation radio communication.")
-# perde gran parte di questo aiuto sui termini tecnici e sull'alfabeto
-# fonetico, quindi teniamolo esteso.
 INITIAL_PROMPT = (
     "ATC radio transmission, aviation phraseology, pilot and tower control. "
     "Aircraft callsigns, runway numbers, headings, flight levels, and altitudes. "
@@ -36,10 +33,8 @@ INITIAL_PROMPT = (
 
 
 class Transcriber:
-    
-    def __init__(self, config, event_bus=None):
+    def __init__(self, config):
         logger.debug("Inizializzazione Transcriber...")
-        self.event_bus = event_bus
         groq_cfg = config.get("api", {}).get("groq", {})
         self.api_key = groq_cfg.get("api_key", "")
         if not self.api_key:
@@ -52,7 +47,7 @@ class Transcriber:
         self.groq_model = groq_cfg.get("model", "whisper-large-v3")
         self.groq_url = groq_cfg.get("url", "https://api.groq.com/openai/v1/audio/transcriptions")
         self.groq_timeout_s = groq_cfg.get("timeout_s", 10)
-        max_concurrent_requests = groq_cfg.get("max_concurrent_requests", 3)
+        max_concurrent_requests = groq_cfg.get("max_concurrent_requests", 5)
         self.reorder_timeout_s = groq_cfg.get("reorder_timeout_s", 3.0)
 
         self.use_flac = groq_cfg.get("use_flac", True) and SOUNDFILE_AVAILABLE
@@ -64,6 +59,7 @@ class Transcriber:
         self.band_max = config.get("filter", {}).get("band_max", 3400)
         self.rate = config.get("audio", {}).get("rate", 16000)
 
+        # Pre-calcola il filtro UNA VOLTA SOLA se attivo
         if self.apply_filter:
             if not SCIPY_AVAILABLE:
                 logger.warning("scipy non installato: filtro disabilitato. Installa con: pip install scipy")
@@ -73,6 +69,7 @@ class Transcriber:
                 self._filter_a = [1.0]
                 logger.info("Filtro passa-banda pre-calcolato (%d-%d Hz).", self.band_min, self.band_max)
 
+        # Sessione HTTP con pool di connessioni
         self.session = requests.Session()
         adapter = HTTPAdapter(
             pool_connections=max_concurrent_requests,
@@ -109,6 +106,7 @@ class Transcriber:
         }
         self.metrics_lock = threading.Lock()
 
+        # Thread di dispatcher, printer e metriche
         self.dispatch_thread = threading.Thread(target=self._dispatch_loop, daemon=True)
         self.dispatch_thread.start()
 
@@ -146,19 +144,14 @@ class Transcriber:
         logger.debug("Processamento segmento seq=%d iniziato.", seq)
 
         if self.apply_filter:
+            # Converti in float32 solo se necessario
             if audio.dtype == np.int16:
                 audio_float = audio.astype(np.float32) / 32768.0
             else:
                 audio_float = audio.astype(np.float32)
             audio_filtered = signal.lfilter(self._filter_b, self._filter_a, audio_float)
-            # FIX: un filtro FIR può generare overshoot anche su input già
-            # normalizzato (ripple del filtro). Senza questo clip, la
-            # conversione a int16 più a valle (in utils.py) può andare in
-            # wraparound su singoli campioni, producendo click/scoppi
-            # nell'audio inviato a Groq. utils.py clippa comunque come rete
-            # di sicurezza, ma è più corretto farlo subito qui dove si
-            # conosce l'origine del possibile overshoot.
-            audio_filtered = np.clip(audio_filtered, -1.0, 1.0)
+            # Clip per evitare overflow int16
+            audio_filtered = np.clip(audio_filtered, -0.99, 0.99)
             text = self._transcribe_with_groq(audio_filtered)
         else:
             text = self._transcribe_with_groq(audio)
@@ -173,6 +166,7 @@ class Transcriber:
                 self.metrics["segments_failed"] += 1
                 logger.warning("Segmento seq=%d fallito (timeout o errore Groq).", seq)
 
+        # Anti-loop: scarta ripetizioni brevi identiche
         if text:
             with self._last_text_lock:
                 if text == self.last_text and len(text) < 15:
@@ -202,7 +196,7 @@ class Transcriber:
                     logger.debug("Printer: stampato segmento seq=%d", seq)
                 elif (time.time() - arrived_at) > self.reorder_timeout_s:
                     heapq.heappop(self._result_heap)
-                    self._next_seq_to_print = max(self._next_seq_to_print, seq + 1)
+                    self._next_seq_to_print = seq + 1
                     logger.warning("Printer: timeout per seq=%d, salto avanti.", seq)
                 else:
                     self._result_lock.wait(timeout=self.reorder_timeout_s)
@@ -224,21 +218,12 @@ class Transcriber:
         else:
             print("[Transcriber] Nessun testo riconosciuto.")
         print("-" * 40)
-        if self.event_bus:
-            self.event_bus.emit("transcript", text=text)
 
     def _metrics_loop(self):
-        """
-        Stampa metriche di riepilogo ogni 10 secondi.
-        Inoltre, se il debug è attivo, stampa la dimensione della coda ogni 2 secondi.
-
-        FIX: usa stop_event.wait() invece di time.sleep(), cosi' allo
-        shutdown il thread si sveglia immediatamente quando stop_event viene
-        settato, invece di aspettare fino a 1s in piu' prima di accorgersene.
-        """
+        """Stampa metriche di riepilogo ogni 10 secondi e monitoraggio coda in debug."""
         last_queue_log = time.time()
-        while not self.stop_event.wait(timeout=1.0):
-            # === METRICHE COMPLETE OGNI 10 SECONDI ===
+        while not self.stop_event.is_set():
+            time.sleep(1)
             if time.time() - self.metrics["last_log_time"] >= 10:
                 with self.metrics_lock:
                     submitted = self.metrics["segments_submitted"]
@@ -247,16 +232,9 @@ class Transcriber:
                     avg_time = (self.metrics["total_response_time"] / completed) if completed > 0 else 0.0
                     queue_size = self.transcribe_queue.qsize()
                     self.metrics["last_log_time"] = time.time()
-                logger.debug("📊 Metriche: inviati=%d, completati=%d, falliti=%d, coda=%d, tempo_medio=%.2fs",
+                logger.info("📊 Metriche: inviati=%d, completati=%d, falliti=%d, coda=%d, tempo_medio=%.2fs",
                             submitted, completed, failed, queue_size, avg_time)
-                if self.event_bus:
-                    self.event_bus.emit(
-                        "metrics",
-                        submitted=submitted, completed=completed, failed=failed,
-                        queue_size=queue_size, avg_time=avg_time
-                    )
 
-            # === MONITORAGGIO VELOCE DELLA CODA (ogni 2 secondi, solo in DEBUG) ===
             if time.time() - last_queue_log >= 2:
                 last_queue_log = time.time()
                 queue_size = self.transcribe_queue.qsize()
@@ -313,6 +291,6 @@ class Transcriber:
         with self._result_lock:
             self._result_lock.notify_all()
         self.printer_thread.join(timeout=self.reorder_timeout_s + 1.0)
-        self.metrics_thread.join(timeout=1.5)
+        self.metrics_thread.join(timeout=1.0)
         self.session.close()
         logger.info("Transcriber fermato.")

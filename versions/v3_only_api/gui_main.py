@@ -3,6 +3,8 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
+import json
+import logging
 
 from config import load_config
 from main import run_pipeline
@@ -93,6 +95,250 @@ class DebugWindow:
 
 
 # ============================================================================
+# FINESTRA DI CONFIGURAZIONE
+# ============================================================================
+class ConfigWindow:
+    def __init__(self, master, app_ref):
+        self.master = master
+        self.app = app_ref
+        self.window = tk.Toplevel(master)
+        self.window.title("⚙️ Configurazione - ATC Transcriber")
+        self.window.geometry("620x520")
+        self.window.minsize(500, 400)
+        self.window.configure(bg=BG)
+        self.window.transient(master)
+        self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        self.config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        self.config_data = self._load_config()
+
+        self.entries = {}
+        self._build_ui()
+
+    def _load_config(self):
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _build_ui(self):
+        main_frame = tk.Frame(self.window, bg=BG)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        tk.Label(main_frame, text="Modifica Configurazione", font=TITLE_FONT,
+                 fg=ACCENT_CYAN, bg=BG).pack(anchor="w", pady=(0, 15))
+
+        canvas = tk.Canvas(main_frame, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # --- Sezione VAD ---
+        vad_frame = self._config_section(scrollable_frame, "Voice Activity Detection (VAD)")
+        vad_params = [
+            ("aggressiveness", "Aggressiveness (0-3)", "vad", "aggressiveness"),
+            ("silence_timeout_s", "Silence timeout (s)", "vad", "silence_timeout_s"),
+            ("max_utterance_s", "Max utterance (s)", "vad", "max_utterance_s"),
+            ("min_segment_duration_s", "Min segment duration (s)", "vad", "min_segment_duration_s"),
+            ("activation_ratio", "Activation ratio (0-1)", "vad", "activation_ratio"),
+        ]
+        for key, label, section, subkey in vad_params:
+            self.entries[key] = self._config_row(vad_frame, label, self.config_data.get(section, {}).get(subkey, ""))
+
+        # --- Sezione Filtro ---
+        filter_frame = self._config_section(scrollable_frame, "Filtro Passa-Banda")
+        filter_params = [
+            ("filter_enabled", "Abilitato (true/false)", "filter", "enabled"),
+            ("band_min", "Band min (Hz)", "filter", "band_min"),
+            ("band_max", "Band max (Hz)", "filter", "band_max"),
+        ]
+        for key, label, section, subkey in filter_params:
+            self.entries[key] = self._config_row(filter_frame, label, self.config_data.get(section, {}).get(subkey, ""))
+
+        # --- Sezione API Groq ---
+        api_frame = self._config_section(scrollable_frame, "API Groq")
+        api_params = [
+            ("model", "Modello", "api", "groq", "model"),
+            ("timeout_s", "Timeout (s)", "api", "groq", "timeout_s"),
+            ("max_concurrent_requests", "Max concurrent requests", "api", "groq", "max_concurrent_requests"),
+            ("use_flac", "Usa FLAC (true/false)", "api", "groq", "use_flac"),
+        ]
+        for key, label, section, subsection, subkey in api_params:
+            val = self.config_data.get(section, {}).get(subsection, {}).get(subkey, "")
+            self.entries[key] = self._config_row(api_frame, label, val)
+
+        # === PULSANTI (APPLICA in alto, OK sotto, entrambi centrati) ===
+        btn_container = tk.Frame(main_frame, bg=BG)
+        btn_container.pack(fill="x", pady=(15, 0))
+
+        # Configura 3 colonne: sinistra (peso 1), centro (peso 0), destra (peso 1)
+        btn_container.grid_columnconfigure(0, weight=1)
+        btn_container.grid_columnconfigure(1, weight=0)
+        btn_container.grid_columnconfigure(2, weight=1)
+
+        # Prima riga: APPLICA (centrato)
+        tk.Button(btn_container, text="🔄 APPLICA", command=self._apply_config,
+                bg=ACCENT_CYAN, fg="#04140a", font=FONT_BOLD, relief="flat", padx=20, pady=8, cursor="hand2").grid(row=0, column=1, pady=(0, 5))
+
+        # Seconda riga: OK (centrato)
+        tk.Button(btn_container, text="✅ OK", command=self._save_and_close,
+                bg=ACCENT_GREEN, fg="#04140a", font=FONT_BOLD, relief="flat", padx=20, pady=8, cursor="hand2").grid(row=1, column=1, pady=(0, 0))
+    
+    
+    def _config_section(self, parent, title):
+        frame = tk.Frame(parent, bg=PANEL_BG, highlightthickness=1, highlightbackground=BORDER)
+        frame.pack(fill="x", pady=6)
+        tk.Label(frame, text=title, font=FONT_SMALL, fg=FG_DIM, bg=PANEL_BG).pack(anchor="w", padx=10, pady=(6, 2))
+        return frame
+
+    def _config_row(self, parent, label_text, default_value):
+        """Crea una riga con label a sinistra e entry a destra, allineate."""
+        row = tk.Frame(parent, bg=PANEL_BG)
+        row.pack(fill="x", padx=10, pady=3)
+
+        # Label (larghezza fissa per allineamento)
+        lbl = tk.Label(row, text=label_text, font=FONT, fg=FG, bg=PANEL_BG,
+                    width=25, anchor="w")
+        lbl.pack(side="left", padx=(0, 10))
+
+        # Entry (si espande per riempire lo spazio rimanente)
+        entry = tk.Entry(row, font=FONT, bg="#05070a", fg=FG,
+                        insertbackground=FG, relief="flat", bd=0)
+        entry.insert(0, str(default_value))
+        entry.pack(side="left", fill="x", expand=True)
+
+        return entry
+
+    def _get_patch_from_entries(self):
+        return {
+            "vad": {
+                "aggressiveness": int(self.entries["aggressiveness"].get()),
+                "silence_timeout_s": float(self.entries["silence_timeout_s"].get()),
+                "max_utterance_s": float(self.entries["max_utterance_s"].get()),
+                "min_segment_duration_s": float(self.entries["min_segment_duration_s"].get()),
+                "activation_ratio": float(self.entries["activation_ratio"].get()),
+            },
+            "filter": {
+                "enabled": self.entries["filter_enabled"].get().lower() == "true",
+                "band_min": int(self.entries["band_min"].get()),
+                "band_max": int(self.entries["band_max"].get()),
+            },
+            "api": {
+                "groq": {
+                    "model": self.entries["model"].get(),
+                    "timeout_s": int(self.entries["timeout_s"].get()),
+                    "max_concurrent_requests": int(self.entries["max_concurrent_requests"].get()),
+                    "use_flac": self.entries["use_flac"].get().lower() == "true",
+                }
+            }
+        }
+
+    def _save_config_with_patch(self, patch):
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception:
+            config = {}
+
+        if "vad" in patch:
+            if "vad" not in config:
+                config["vad"] = {}
+            config["vad"].update(patch["vad"])
+        if "filter" in patch:
+            if "filter" not in config:
+                config["filter"] = {}
+            config["filter"].update(patch["filter"])
+        if "api" in patch:
+            if "api" not in config:
+                config["api"] = {}
+            if "groq" in patch["api"]:
+                if "groq" not in config["api"]:
+                    config["api"]["groq"] = {}
+                for key, value in patch["api"]["groq"].items():
+                    config["api"]["groq"][key] = value
+
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+
+        return config
+
+    def _update_entries_from_config(self, config):
+        self.entries["aggressiveness"].delete(0, tk.END)
+        self.entries["aggressiveness"].insert(0, str(config.get("vad", {}).get("aggressiveness", 1)))
+        self.entries["silence_timeout_s"].delete(0, tk.END)
+        self.entries["silence_timeout_s"].insert(0, str(config.get("vad", {}).get("silence_timeout_s", 1.0)))
+        self.entries["max_utterance_s"].delete(0, tk.END)
+        self.entries["max_utterance_s"].insert(0, str(config.get("vad", {}).get("max_utterance_s", 15.0)))
+        self.entries["min_segment_duration_s"].delete(0, tk.END)
+        self.entries["min_segment_duration_s"].insert(0, str(config.get("vad", {}).get("min_segment_duration_s", 0.6)))
+        self.entries["activation_ratio"].delete(0, tk.END)
+        self.entries["activation_ratio"].insert(0, str(config.get("vad", {}).get("activation_ratio", 0.4)))
+        self.entries["filter_enabled"].delete(0, tk.END)
+        self.entries["filter_enabled"].insert(0, str(config.get("filter", {}).get("enabled", True)))
+        self.entries["band_min"].delete(0, tk.END)
+        self.entries["band_min"].insert(0, str(config.get("filter", {}).get("band_min", 300)))
+        self.entries["band_max"].delete(0, tk.END)
+        self.entries["band_max"].insert(0, str(config.get("filter", {}).get("band_max", 3400)))
+        self.entries["model"].delete(0, tk.END)
+        self.entries["model"].insert(0, config.get("api", {}).get("groq", {}).get("model", "whisper-large-v3"))
+        self.entries["timeout_s"].delete(0, tk.END)
+        self.entries["timeout_s"].insert(0, str(config.get("api", {}).get("groq", {}).get("timeout_s", 10)))
+        self.entries["max_concurrent_requests"].delete(0, tk.END)
+        self.entries["max_concurrent_requests"].insert(0, str(config.get("api", {}).get("groq", {}).get("max_concurrent_requests", 5)))
+        self.entries["use_flac"].delete(0, tk.END)
+        self.entries["use_flac"].insert(0, str(config.get("api", {}).get("groq", {}).get("use_flac", True)))
+
+    def _apply_config(self):
+        try:
+            patch = self._get_patch_from_entries()
+            updated_config = self._save_config_with_patch(patch)
+            self.app._reload_config()
+            self._update_entries_from_config(updated_config)
+            self.app.error_label.config(text="✅ Configurazione applicata (finestra rimane aperta).", fg=ACCENT_GREEN)
+        except Exception as e:
+            self.app.error_label.config(text=f"❌ Errore durante l'applicazione: {e}", fg=ACCENT_RED)
+
+    def _save_and_close(self):
+        try:
+            patch = self._get_patch_from_entries()
+            updated_config = self._save_config_with_patch(patch)
+            self.app._reload_config()
+            self.window.destroy()
+            self.app.error_label.config(text="✅ Configurazione salvata e applicata.", fg=ACCENT_GREEN)
+        except Exception as e:
+            self.app.error_label.config(text=f"❌ Errore durante il salvataggio: {e}", fg=ACCENT_RED)
+
+    def on_close(self):
+        self.window.destroy()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ============================================================================
 # APPLICAZIONE PRINCIPALE
 # ============================================================================
 class TranscriberGUI:
@@ -108,13 +354,17 @@ class TranscriberGUI:
 
         self.debug_enabled = False
         self.debug_window = None
+        self.config_window = None
+
+        self.vad = None
+        self.transcriber = None
+
+        self.transcript_buffer = []
+        self.autosave_interval = 10
+        self.autosave_thread = None
 
         self._build_ui()
         self.root.after(100, self._poll_events)
-
-        self.transcript_buffer = []  # Buffer per accumulare le righe di trascrizione
-        self.transcript_autosave_file = "transcript_autosave.txt"
-        self.autosave_interval = 10  # secondi (0 = disabilitato)
 
     # ------------------------------------------------------------------------
     # UI
@@ -162,6 +412,18 @@ class TranscriberGUI:
                                    font=FONT_BOLD, relief="flat", padx=12, pady=8,
                                    cursor="hand2", bd=0)
         self.debug_btn.pack(side="left", padx=(10, 0))
+
+        self.config_btn = tk.Button(controls, text="⚙️ CONFIG", command=self._open_config_window,
+                                   bg="#2a2a2a", fg=FG_DIM, activebackground="#3d3d3d",
+                                   font=FONT_BOLD, relief="flat", padx=10, pady=8,
+                                   cursor="hand2", bd=0)
+        self.config_btn.pack(side="left", padx=(10, 0))
+
+        self.reload_btn = tk.Button(controls, text="🔄 RICARICA CFG", command=self._reload_config,
+                                   bg="#1a2a2a", fg=ACCENT_CYAN, activebackground="#1a3a3a",
+                                   font=FONT_BOLD, relief="flat", padx=10, pady=8,
+                                   cursor="hand2", bd=0)
+        self.reload_btn.pack(side="left", padx=(10, 0))
 
         self.mode_label = tk.Label(controls, text="", font=FONT_SMALL, fg=FG_DIM, bg=BG)
         self.mode_label.pack(side="right")
@@ -234,48 +496,40 @@ class TranscriberGUI:
             ("VAD Sensibilità", "0.4"),
             ("Worker Groq", "5"),
         ]
+        self.quick_config_labels = {}
         for label, value in params:
             row = tk.Frame(cfg_inner, bg=CARD_BG)
             row.pack(fill="x", pady=2)
             tk.Label(row, text=label+":", font=FONT_SMALL, fg=FG_DIM, bg=CARD_BG,
                      width=14, anchor="w").pack(side="left")
-            tk.Label(row, text=value, font=FONT_SMALL, fg=FG, bg=CARD_BG,
-                     anchor="w").pack(side="left")
+            val_lbl = tk.Label(row, text=value, font=FONT_SMALL, fg=FG, bg=CARD_BG,
+                               anchor="w")
+            val_lbl.pack(side="left")
+            self.quick_config_labels[label] = val_lbl
 
-        # Stato sistema (con pallini verdi/rossi)
+        # Stato sistema
         status_frame2 = self._card(right_col, "📡 STATO SISTEMA")
         st_inner = tk.Frame(status_frame2, bg=CARD_BG)
         st_inner.pack(fill="both", expand=True, padx=8, pady=8)
 
-        self.status_items = {}  # dizionario per memorizzare canvas e label
-
-        # Lista degli stati: (etichetta, testo iniziale, active iniziale)
+        self.status_items = {}
         status_config = [
             ("🎤 Microfono", "DISATTIVO", False),
             ("🌐 Groq API", "DISCONNESSA", False),
-            ("🔵 Filtro", "300-3400 Hz (ON)", True),  # sempre attivo
+            ("🔵 Filtro", "300-3400 Hz (ON)", True),
         ]
 
         for label, initial_text, active in status_config:
             row = tk.Frame(st_inner, bg=CARD_BG)
             row.pack(fill="x", pady=2)
-
-            # Etichetta
             tk.Label(row, text=label+":", font=FONT_SMALL, fg=FG_DIM, bg=CARD_BG,
                      width=14, anchor="w").pack(side="left")
-
-            # Canvas per il pallino (10x10)
             canvas = tk.Canvas(row, width=12, height=12, bg=CARD_BG, highlightthickness=0)
             canvas.pack(side="left", padx=(0, 6))
-            # Disegna il cerchio
             color = ACCENT_GREEN if active else ACCENT_RED
             dot = canvas.create_oval(2, 2, 10, 10, fill=color, outline="")
-
-            # Label per il testo
             lbl = tk.Label(row, text=initial_text, font=FONT_SMALL, fg=FG, bg=CARD_BG, anchor="w")
             lbl.pack(side="left")
-
-            # Salva i riferimenti
             self.status_items[label] = {
                 "canvas": canvas,
                 "dot": dot,
@@ -283,7 +537,7 @@ class TranscriberGUI:
                 "active": active
             }
 
-        # Uptime (senza pallino)
+        # Uptime
         row = tk.Frame(st_inner, bg=CARD_BG)
         row.pack(fill="x", pady=2)
         tk.Label(row, text="⏱️ Uptime:", font=FONT_SMALL, fg=FG_DIM, bg=CARD_BG,
@@ -343,14 +597,9 @@ class TranscriberGUI:
         c.create_line(thr_x, 0, thr_x, h, fill=ACCENT_AMBER, width=2)
 
     # ------------------------------------------------------------------------
-    # GESTIONE STATI (con pallini)
+    # GESTIONE STATI
     # ------------------------------------------------------------------------
     def _update_status_item(self, label, active, custom_text=None):
-        """
-        Aggiorna lo stato di un elemento (Microfono, API, Filtro).
-        active: True -> pallino verde, False -> pallino rosso.
-        custom_text: se fornito, sovrascrive il testo della label.
-        """
         if label not in self.status_items:
             return
         item = self.status_items[label]
@@ -358,7 +607,6 @@ class TranscriberGUI:
         item["canvas"].itemconfig(item["dot"], fill=color)
         item["active"] = active
 
-        # Aggiorna il testo
         if custom_text is not None:
             text = custom_text
         else:
@@ -373,6 +621,89 @@ class TranscriberGUI:
             s = elapsed % 60
             self.uptime_label.config(text=f"{h:02d}:{m:02d}:{s:02d}")
         self.root.after(1000, self._update_uptime)
+
+    # ------------------------------------------------------------------------
+    # FINESTRA DI CONFIGURAZIONE (chiama la classe)
+    # ------------------------------------------------------------------------
+    def _open_config_window(self):
+        if self.config_window is None or not self.config_window.window.winfo_exists():
+            self.config_window = ConfigWindow(self.root, self)
+        else:
+            self.config_window.window.lift()
+
+    # ------------------------------------------------------------------------
+    # RELOAD CONFIG
+    # ------------------------------------------------------------------------
+    def _reload_config(self):
+        """Ricarica config.json e applica le modifiche ai componenti attivi (VAD e filtro) senza riavviare."""
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception as e:
+            self.error_label.config(text=f"❌ Errore nel caricamento di config.json: {e}", fg=ACCENT_RED)
+            return
+
+        # Aggiorna il VAD se esiste
+        if self.vad is not None:
+            vad_cfg = config.get("vad", {})
+            try:
+                self.vad.aggressiveness = vad_cfg.get("aggressiveness", 1)
+                self.vad.silence_timeout_s = vad_cfg.get("silence_timeout_s", 1.0)
+                self.vad.max_utterance_s = vad_cfg.get("max_utterance_s", 15.0)
+                self.vad.min_segment_duration_s = vad_cfg.get("min_segment_duration_s", 0.6)
+                self.vad.activation_ratio = vad_cfg.get("activation_ratio", 0.4)
+                self.vad.vad.set_mode(self.vad.aggressiveness)
+                self.vad._update_buffers()
+                logging.getLogger("AudioTranscriber").info(
+                    "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f",
+                    self.vad.aggressiveness, self.vad.activation_ratio
+                )
+            except Exception as e:
+                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
+
+        # Aggiorna il Transcriber (filtro) se esiste
+        if self.transcriber is not None:
+            try:
+                filter_cfg = config.get("filter", {})
+                self.transcriber.apply_filter = filter_cfg.get("enabled", False)
+                self.transcriber.band_min = filter_cfg.get("band_min", 300)
+                self.transcriber.band_max = filter_cfg.get("band_max", 3400)
+                if self.transcriber.apply_filter and hasattr(self.transcriber, 'SCIPY_AVAILABLE') and self.transcriber.SCIPY_AVAILABLE:
+                    from scipy import signal
+                    self.transcriber._filter_b = signal.firwin(65, [self.transcriber.band_min, self.transcriber.band_max],
+                                                               fs=self.transcriber.rate, pass_zero=False)
+                    self.transcriber._filter_a = [1.0]
+                    logging.getLogger("AudioTranscriber").info(
+                        "Filtro aggiornato: enabled=%s, band=%d-%d Hz",
+                        self.transcriber.apply_filter, self.transcriber.band_min, self.transcriber.band_max
+                    )
+                else:
+                    logging.getLogger("AudioTranscriber").info("Filtro disabilitato o scipy non disponibile.")
+            except Exception as e:
+                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del filtro: {e}", fg=ACCENT_AMBER)
+
+        # Aggiorna la GUI
+        self._update_gui_from_config(config)
+
+        # Aggiorna il filtro nello stato sistema
+        filter_active = config.get("filter", {}).get("enabled", False)
+        filter_text = f"300-3400 Hz (ON)" if filter_active else "DISABILITATO"
+        self._update_status_item("🔵 Filtro", filter_active, filter_text)
+
+        self.error_label.config(text="✅ Configurazione ricaricata e applicata (VAD e filtro aggiornati).", fg=ACCENT_GREEN)
+        logging.getLogger("AudioTranscriber").info("Configurazione ricaricata e applicata.")
+
+    def _update_gui_from_config(self, config):
+        """Aggiorna le etichette della configurazione rapida e la modalità."""
+        groq_cfg = config.get("api", {}).get("groq", {})
+        mode = "RADIO (bypass VAD)" if config.get("radio", {}).get("bypass_vad") else "VAD classico"
+        self.mode_label.config(
+            text=f"Modello: {groq_cfg.get('model', '?')}   •   Modalità: {mode}"
+        )
+        self.quick_config_labels["Modello"].config(text=groq_cfg.get("model", "Whisper-large-v3"))
+        self.quick_config_labels["VAD Sensibilità"].config(text=str(config.get("vad", {}).get("activation_ratio", 0.4)))
+        self.quick_config_labels["Worker Groq"].config(text=str(groq_cfg.get("max_concurrent_requests", 5)))
 
     # ------------------------------------------------------------------------
     # AZIONI
@@ -396,35 +727,40 @@ class TranscriberGUI:
             text=f"Modello: {groq_cfg.get('model', '?')}   •   Modalità: {mode}"
         )
 
-        # Aggiorna stati: Microfono e API attivi (verde)
         self._update_status_item("🎤 Microfono", True, "ATTIVO")
         self._update_status_item("🌐 Groq API", True, "CONNESSA")
+        filter_active = config.get("filter", {}).get("enabled", False)
+        filter_text = f"300-3400 Hz (ON)" if filter_active else "DISABILITATO"
+        self._update_status_item("🔵 Filtro", filter_active, filter_text)
 
-        # Resetta il contatore dell'uptime
         self._uptime_start = time.time()
         self.uptime_label.config(text="00:00:00")
 
-        # Resetta il file di log all'avvio (se debug attivo)
         if self.debug_enabled:
             from logger import clear_log_file
             clear_log_file()
+
+        from main import run_pipeline
+        from vad import VADProcessor
+        from transcriber import Transcriber
+        from audio import AudioCapture
+
+        self.vad = VADProcessor(
+            rate=config.get("audio", {}).get("rate", 16000),
+            frame_duration_ms=config.get("audio", {}).get("frame_duration_ms", 30),
+            aggressiveness=config.get("vad", {}).get("aggressiveness", 1),
+            silence_timeout_s=config.get("vad", {}).get("silence_timeout_s", 1.0),
+            max_utterance_s=config.get("vad", {}).get("max_utterance_s", 15.0),
+            min_segment_duration_s=config.get("vad", {}).get("min_segment_duration_s", 0.6),
+            activation_ratio=config.get("vad", {}).get("activation_ratio", 0.4)
+        )
+        self.transcriber = Transcriber(config)
 
         self.stop_event = threading.Event()
         self.worker = threading.Thread(
             target=self._pipeline_thread, args=(config,), daemon=True
         )
         self.running = True
-
-            # === AVVIA L'AUTOSAVE ===
-        if self.autosave_interval > 0:
-            self.autosave_thread = threading.Thread(
-                target=self._autosave_loop, 
-                daemon=True
-            )
-            self.autosave_thread.start()
-
-        self.start_btn.config(state="disabled")
-
         self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
         self._set_status("IN ASCOLTO", ACCENT_GREEN)
@@ -433,6 +769,7 @@ class TranscriberGUI:
 
     def _pipeline_thread(self, config):
         try:
+            from main import run_pipeline
             run_pipeline(config, event_bus=self.bus, stop_event=self.stop_event)
         except Exception as e:
             self.bus.emit("error", message=str(e))
@@ -442,12 +779,8 @@ class TranscriberGUI:
     def _on_stop(self):
         if not self.running:
             return
-        
-        self.running = False  # <--- Questo ferma il loop
-        if self.autosave_thread and self.autosave_thread.is_alive():
-            self.autosave_thread.join(timeout=1.0)
 
-        # --- Gestione del buffer di trascrizione ---
+        # Gestione trascrizione
         if self.transcript_buffer:
             if messagebox.askyesno(
                 "Salva trascrizione",
@@ -466,7 +799,6 @@ class TranscriberGUI:
                         fg=ACCENT_RED
                     )
             else:
-                # L'utente ha scelto di non salvare: svuota il buffer
                 self._clear_transcript_buffer()
                 self.error_label.config(
                     text="ℹ️ Trascrizione scartata.",
@@ -478,34 +810,72 @@ class TranscriberGUI:
                 fg=FG_DIM
             )
 
-        # --- Gestione del debug (come prima) ---
+        # Gestione debug log
         if self.debug_enabled:
-            # ... (codice esistente per il debug) ...
-            pass
+            import os
+            from logger import archive_log_file, clear_log_file
+            log_file = "transcriber.log"
+            has_content = False
+            if os.path.exists(log_file) and os.path.getsize(log_file) > 0:
+                has_content = True
+
+            if has_content:
+                if messagebox.askyesno(
+                    "Salva log di debug",
+                    "Il file transcriber.log contiene messaggi di debug.\n"
+                    "Vuoi salvarlo (con timestamp) o eliminarlo?"
+                ):
+                    new_name = archive_log_file()
+                    if new_name:
+                        self.error_label.config(
+                            text=f"✅ Log di debug salvati in: {new_name}",
+                            fg=ACCENT_GREEN
+                        )
+                    else:
+                        self.error_label.config(
+                            text="❌ Errore durante il salvataggio dei log.",
+                            fg=ACCENT_RED
+                        )
+                else:
+                    if clear_log_file():
+                        self.error_label.config(
+                            text="ℹ️ Log di debug eliminati.",
+                            fg=ACCENT_AMBER
+                        )
+                    else:
+                        self.error_label.config(
+                            text="⚠️ Impossibile eliminare il file di log.",
+                            fg=ACCENT_RED
+                        )
+            else:
+                self.error_label.config(
+                    text="ℹ️ Nessun messaggio di debug da salvare.",
+                    fg=FG_DIM
+                )
 
         self.stop_event.set()
         self.stop_btn.config(state="disabled")
         self._set_status("FERMO", FG_DIM)
         self.error_label.config(text="⏹️ Trascrizione terminata.", fg=FG_DIM)
 
-    def _save_transcript(self):
-        transcript_text = self.transcript.get("1.0", "end-1c").strip()
-        if not transcript_text:
-            self.error_label.config(text="⚠️ Nessuna trascrizione da salvare.", fg=ACCENT_AMBER)
-            return
-
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"transcript_{timestamp}.txt"
+    def _save_transcript_from_buffer(self, filename=None):
+        if not self.transcript_buffer:
+            return None
+        if filename is None:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"transcript_{timestamp}.txt"
         try:
             with open(filename, "w", encoding="utf-8") as f:
-                f.write(transcript_text)
-            self.error_label.config(
-                text=f"✅ Trascrizione salvata in: {filename}",
-                fg=ACCENT_GREEN
-            )
-            self.root.after(5000, lambda: self.error_label.config(fg=ACCENT_RED))
-        except Exception as e:
-            self.error_label.config(text=f"❌ Errore durante il salvataggio: {e}", fg=ACCENT_RED)
+                f.write("\n".join(self.transcript_buffer))
+            return filename
+        except Exception:
+            return None
+
+    def _clear_transcript_buffer(self):
+        self.transcript_buffer = []
+        self.transcript.config(state="normal")
+        self.transcript.delete("1.0", "end")
+        self.transcript.config(state="disabled")
 
     def _set_status(self, text, color):
         self.status_label.config(text=text, fg=color)
@@ -518,19 +888,16 @@ class TranscriberGUI:
         self.debug_enabled = not self.debug_enabled
         if self.debug_enabled:
             self.debug_btn.config(text="🐞 DEBUG ON", bg=ACCENT_AMBER, fg="#14100a")
-            import logging
             logging.getLogger("AudioTranscriber").setLevel(logging.DEBUG)
             self.debug_window = DebugWindow(self.root)
             self.error_label.config(text="🐞 Modalità DEBUG attiva. I log verranno gestiti allo stop.", fg=ACCENT_AMBER)
         else:
             self.debug_btn.config(text="🐞 DEBUG OFF", bg="#2a2a2a", fg=FG_DIM)
-            import logging
             logging.getLogger("AudioTranscriber").setLevel(logging.INFO)
             if self.debug_window:
                 self.debug_window.on_close()
                 self.debug_window = None
 
-            # Se disattivi il debug, chiedi se salvare il file di log
             import os
             from logger import archive_log_file, clear_log_file
             log_file = "transcriber.log"
@@ -597,7 +964,6 @@ class TranscriberGUI:
                 self._update_status_item("🎤 Microfono", False, "DISATTIVO")
                 self._update_status_item("🌐 Groq API", False, "DISCONNESSA")
                 self.error_label.config(text="⏹️ Trascrizione terminata.", fg=FG_DIM)
-
         self.root.after(100, self._poll_events)
 
     def _append_transcript(self, text):
@@ -610,53 +976,20 @@ class TranscriberGUI:
             self.transcript.insert("end", "(nessun testo riconosciuto)\n", "dim")
         self.transcript.see("end")
         self.transcript.config(state="disabled")
-        
-        # AGGIUNGE AL BUFFER
         if text:
             self.transcript_buffer.append(f"[{ts}] {text}")
 
+    # ------------------------------------------------------------------------
+    # CHIUSURA
+    # ------------------------------------------------------------------------
     def on_close(self):
         if self.running:
             self.stop_event.set()
         if self.debug_window:
             self.debug_window.on_close()
+        if self.config_window:
+            self.config_window.on_close()
         self.root.destroy()
-
-    def _save_transcript_from_buffer(self, filename=None):
-        """Salva il buffer di trascrizione in un file .txt."""
-        if not self.transcript_buffer:
-            return None
-        
-        if filename is None:
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"transcript_{timestamp}.txt"
-        
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write("\n".join(self.transcript_buffer))
-            return filename
-        except Exception as e:
-            return None
-
-    def _clear_transcript_buffer(self):
-        """Svuota il buffer di trascrizione e resetta l'area di testo."""
-        self.transcript_buffer = []
-        self.transcript.config(state="normal")
-        self.transcript.delete("1.0", "end")
-        self.transcript.config(state="disabled")
-
-    def _autosave_loop(self):
-        """Thread che salva periodicamente la trascrizione in un file temporaneo."""
-        while self.running:
-            time.sleep(self.autosave_interval)
-            if self.transcript_buffer:
-                try:
-                    with open("transcript_autosave.txt", "w", encoding="utf-8") as f:
-                        f.write("\n".join(self.transcript_buffer))
-                    # (opzionale) messaggio di debug
-                    # print(f"[Autosave] Salvate {len(self.transcript_buffer)} righe")
-                except Exception as e:
-                    print(f"[Autosave] Errore: {e}")
 
 
 # ============================================================================

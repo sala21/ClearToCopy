@@ -2,11 +2,9 @@ import logging
 import sys
 import json
 import os
+import threading
+from datetime import datetime
 
-
-# =============================================
-# CARICA CONFIGURAZIONE PER IL DEBUG
-# =============================================
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 debug_config = {
     "enabled": False,
@@ -21,13 +19,9 @@ try:
 except Exception:
     pass
 
-# =============================================
-# FUNZIONI PER LA GESTIONE DEL FILE DI LOG
-# =============================================
 LOG_FILE = "transcriber.log"
 
 def archive_log_file():
-    """Rinomina il file di log con timestamp e restituisce il nuovo nome."""
     if not os.path.exists(LOG_FILE):
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -35,11 +29,10 @@ def archive_log_file():
     try:
         os.rename(LOG_FILE, new_name)
         return new_name
-    except Exception as e:
+    except Exception:
         return None
 
 def clear_log_file():
-    """Svuota il file di log (cancella il contenuto)."""
     if os.path.exists(LOG_FILE):
         try:
             with open(LOG_FILE, "w", encoding="utf-8") as f:
@@ -49,20 +42,38 @@ def clear_log_file():
             return False
     return False
 
-# =============================================
-# CONFIGURAZIONE DEL LOGGER
-# =============================================
-logger = logging.getLogger("AudioTranscriber")
-logger.setLevel(logging.DEBUG)  # Il logger raccoglie TUTTO
+_debug_buffer = []
+_buffer_lock = threading.Lock()
 
-# --- Handler per la console (schermo) ---
+def get_debug_buffer():
+    with _buffer_lock:
+        content = _debug_buffer.copy()
+        _debug_buffer.clear()
+        return content
+
+def clear_debug_buffer():
+    with _buffer_lock:
+        _debug_buffer.clear()
+
+def save_debug_buffer_to_file():
+    content = get_debug_buffer()
+    if not content:
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"debug_{timestamp}.log"
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write("\n".join(content))
+        return filename
+    except Exception:
+        return None
+
+logger = logging.getLogger("AudioTranscriber")
+logger.setLevel(logging.DEBUG)
+
 console_handler = logging.StreamHandler(sys.stdout)
 console_level = debug_config.get("console_level", "INFO").upper()
-if debug_config.get("enabled", False):
-    console_handler.setLevel(logging.DEBUG)   # Se debug attivo, mostra tutto
-else:
-    console_handler.setLevel(getattr(logging, console_level, logging.INFO))
-
+console_handler.setLevel(getattr(logging, console_level, logging.INFO))
 console_formatter = logging.Formatter(
     '%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%H:%M:%S'
@@ -70,10 +81,9 @@ console_formatter = logging.Formatter(
 console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 
-# --- Handler per il file (opzionale) ---
 if debug_config.get("log_to_file", True):
-    file_handler = logging.FileHandler("transcriber.log", mode='w', encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)  # Il file registra SEMPRE tutto
+    file_handler = logging.FileHandler(LOG_FILE, mode='w', encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
     file_formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
@@ -81,8 +91,23 @@ if debug_config.get("log_to_file", True):
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
-# =============================================
-# FUNZIONE DI COMODO
-# =============================================
+class DebugBufferHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.setLevel(logging.DEBUG)
+
+    def emit(self, record):
+        if record.levelno == logging.DEBUG:
+            with _buffer_lock:
+                _debug_buffer.append(self.format(record))
+
+debug_buffer_handler = DebugBufferHandler()
+debug_formatter = logging.Formatter(
+    '%(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+debug_buffer_handler.setFormatter(debug_formatter)
+logger.addHandler(debug_buffer_handler)
+
 def get_logger():
     return logger
