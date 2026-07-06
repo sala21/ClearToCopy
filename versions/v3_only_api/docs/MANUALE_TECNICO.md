@@ -15,6 +15,12 @@
 6. [Modalità operative](#6-modalità-operative)
 7. [Pipeline di trascrizione (Groq)](#7-pipeline-di-trascrizione-groq)
 8. [Interfaccia grafica (GUI)](#8-interfaccia-grafica-gui)
+   8.1 [Struttura visuale](#81-struttura-visuale)
+   8.2 [Esecuzione della pipeline](#82-esecuzione-della-pipeline)
+   8.3 [Eventi gestiti dalla GUI](#83-eventi-gestiti-dalla-gui)
+   8.4 [Salvataggio trascrizioni](#84-salvataggio-trascrizioni)
+   8.5 [Debug toggle](#85-debug-toggle)
+   8.6 [Finestra di configurazione (ConfigWindow)](#86-finestra-di-configurazione-configwindow)
 9. [Sistema di logging e debug](#9-sistema-di-logging-e-debug)
 10. [Gestione file e dati sensibili](#10-gestione-file-e-dati-sensibili)
 11. [Problemi noti risolti (changelog tecnico)](#11-problemi-noti-risolti-changelog-tecnico)
@@ -407,6 +413,29 @@ Attivando il pulsante DEBUG:
 Disattivandolo, se il file di log contiene dati, viene chiesto se archiviarlo (rinominandolo con timestamp) o cancellarlo.
 
 > **Nota di codice**: nel metodo `_toggle_debug`, quando `debug_enabled` diventa `False`, l'ultima riga imposta comunque `self.error_label.config(text="🐞 Debug disattivato.", ...)` **dopo** l'eventuale messaggio di conferma salvataggio — quindi il messaggio "Log salvati in: ..." viene immediatamente sovrascritto e non è mai visibile all'utente. Se serve mostrare l'esito del salvataggio, va rimossa o condizionata l'ultima riga.
+
+
+#### 8.6 Finestra di configurazione (ConfigWindow)
+
+La GUI include una finestra di modifica dei parametri di `config.json`, accessibile tramite l'apposito pulsante (non mostrato nel codice fornito, ma integrato nell'interfaccia principale). Questa finestra, implementata dalla classe `ConfigWindow`, consente di visualizzare e modificare i parametri di configurazione più rilevanti senza dover editare manualmente il file JSON.
+
+**Struttura dell'interfaccia**
+
+La finestra è suddivisa in tre sezioni principali, ciascuna con i propri campi di input:
+
+*   **Voice Activity Detection (VAD)**: controlla i parametri relativi alla segmentazione vocale (aggressività, timeout di silenzio, durata massima/minima dei segmenti, rapporto di attivazione).
+*   **Filtro Passa-Banda**: abilita/disabilita il filtro e ne imposta le frequenze di taglio (minima e massima).
+*   **API Groq**: consente di modificare il modello da utilizzare, il timeout delle richieste, il numero massimo di richieste concorrenti e l'abilitazione della codifica FLAC.
+
+**Funzionamento interno**
+
+1.  **Caricamento**: all'apertura, la finestra carica i valori correnti da `config.json`.
+2.  **Modifica**: l'utente interagisce con i campi di input.
+3.  **Salvataggio (Patch)**: quando l'utente preme **APPLICA** o **OK**, la finestra costruisce un "patch" (un dizionario Python) contenente esclusivamente i valori modificati. Questo patch viene quindi applicato al `config.json` caricato, sovrascrivendo solo le chiavi corrispondenti e preservando il resto della struttura.
+4.  **Ricaricamento**: dopo il salvataggio, viene chiamato il metodo `_reload_config()` dell'applicazione principale, che ricarica la configurazione aggiornata nei moduli interni. Questo permette di rendere effettive le modifiche (sebbene, per alcune modifiche come quelle relative al VAD o al filtro, sia necessario riavviare la pipeline di acquisizione).
+5.  **Pulsanti**:
+    *   **APPLICA**: salva le modifiche su disco, ricarica la configurazione nell'app e mantiene la finestra aperta per ulteriori modifiche o test.
+    *   **OK**: esegue le stesse operazioni di `APPLICA` e chiude la finestra.
 
 ---
 
