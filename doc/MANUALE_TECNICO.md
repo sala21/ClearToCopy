@@ -121,7 +121,7 @@
 ```bash
 python -m venv venv
 venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Linux/Mac
+source venv/bin/activate     # Linux/Mac
 pip install -r requirements.txt
 ```
 
@@ -201,7 +201,7 @@ Il file `config.json` centralizza tutti i parametri. Essendo JSON puro (senza co
 | `band_min` | `300` | Frequenza minima lasciata passare (Hz) |
 | `band_max` | `3400` | Frequenza massima lasciata passare (Hz) — range tipico voce radio/telefonica |
 
-> **Nota architetturale importante**: il filtro passa-banda è applicato **una sola volta**, centralmente, in `Transcriber._process_segment()`. In precedenza esisteva un secondo filtro anche in `preprocess_radio_audio()` (main.py): la doppia applicazione in cascata restringeva la banda oltre il previsto e introduceva distorsione di fase non necessaria. È stato consolidato in un unico punto (vedi §11).
+
 
 ### 4.5 Sezione `debug`
 

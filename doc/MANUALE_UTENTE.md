@@ -148,7 +148,3 @@ Le modifiche vengono salvate in `config.json`. La finestra è progettata per agg
 ---
 
 **Nota per l'utente finale**: se non sei sicuro di cosa modificare, è consigliabile lasciare i valori predefiniti. La finestra di configurazione è pensata per utenti esperti che vogliono ottimizzare il comportamento del sistema.
-
----
-
-**Versione manuale:** 1.0 (06/07/2026)
