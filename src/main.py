@@ -11,7 +11,21 @@ from logger import get_logger
 logger = get_logger()
 
 
-def run_pipeline(config, event_bus=None, stop_event=None):
+def run_pipeline(config, event_bus=None, stop_event=None, components_ref=None):
+    """
+    Avvia cattura audio + VAD + trascrizione e li lascia girare finché lo
+    stream è attivo o finché 'stop_event' non viene settato dall'esterno.
+
+    - event_bus: se fornito, viene propagato al Transcriber così che
+      trascrizioni e metriche vengano emesse anche verso la GUI (oltre a
+      console/log, che avvengono comunque indipendentemente da questo).
+    - components_ref: dict opzionale (es. fornito dalla GUI). Se presente,
+      viene popolato con i riferimenti reali a 'audio', 'vad' e
+      'transcriber' non appena creati, PRIMA di entrare nel loop
+      bloccante. Questo permette al chiamante (es. _reload_config nella
+      GUI) di agire sulle istanze REALMENTE in esecuzione, invece di
+      crearne di proprie scollegate da questa pipeline.
+    """
     if stop_event is None:
         stop_event = threading.Event()
 
@@ -28,7 +42,13 @@ def run_pipeline(config, event_bus=None, stop_event=None):
     activation_ratio = vad_cfg.get("activation_ratio", 0.4)
 
     audio = AudioCapture(rate=rate, channels=channels, chunk=chunk)
-    transcriber = Transcriber(config)
+
+    # FIX: event_bus ora viene propagato al Transcriber. Prima veniva
+    # creato con Transcriber(config), senza event_bus: il Transcriber
+    # continuava a stampare/loggare su console (da qui la trascrizione
+    # visibile in CLI) ma non emetteva mai nulla verso la GUI.
+    transcriber = Transcriber(config, event_bus=event_bus)
+
     vad = VADProcessor(
         rate=rate,
         frame_duration_ms=frame_duration_ms,
@@ -38,6 +58,15 @@ def run_pipeline(config, event_bus=None, stop_event=None):
         min_segment_duration_s=min_segment_duration_s,
         activation_ratio=activation_ratio
     )
+
+    # FIX: espone i componenti reali al chiamante (es. la GUI), così chi
+    # vuole modificarli "a caldo" (vedi _reload_config in gui_main.py)
+    # agisce sulle istanze che stanno davvero girando, non su copie
+    # orfane create altrove e mai collegate a questa pipeline.
+    if components_ref is not None:
+        components_ref["audio"] = audio
+        components_ref["vad"] = vad
+        components_ref["transcriber"] = transcriber
 
     def on_segment_ready(audio_np):
         transcriber.enqueue(audio_np)

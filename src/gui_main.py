@@ -9,6 +9,7 @@ import logging
 from config import load_config
 from main import run_pipeline
 from events import EventBus
+from logger import archive_log_file, clear_log_file, set_console_debug
 
 
 # ============================================================================
@@ -353,8 +354,10 @@ class TranscriberGUI:
         self.debug_window = None
         self.config_window = None
 
-        self.vad = None
-        self.transcriber = None
+        # FIX: non serve più creare vad/transcriber "a mano" qui — vengono
+        # creati dentro run_pipeline() e riferiti qui tramite questo dict,
+        # popolato da run_pipeline stesso non appena le istanze esistono.
+        self._pipeline_components = {}
 
         self.transcript_buffer = []
         self.autosave_interval = 10
@@ -597,6 +600,7 @@ class TranscriberGUI:
     # ------------------------------------------------------------------------
     # GESTIONE STATI
     # ------------------------------------------------------------------------
+    
     def _update_status_item(self, label, active, custom_text=None):
         if label not in self.status_items:
             return
@@ -605,10 +609,15 @@ class TranscriberGUI:
         item["canvas"].itemconfig(item["dot"], fill=color)
         item["active"] = active
 
+        # FIX: "ATTIVO" if active else "DISATTIVO" if label==... else "DISCONNESSA"
+        # equivaleva a "ATTIVO" if active else (...), quindi con active=True
+        # mostrava sempre "ATTIVO" a prescindere dall'etichetta.
         if custom_text is not None:
             text = custom_text
+        elif label == "🎤 Microfono":
+            text = "ATTIVO" if active else "DISATTIVO"
         else:
-            text = "ATTIVO" if active else "DISATTIVO" if label == "🎤 Microfono" else "DISCONNESSA"
+            text = "CONNESSA" if active else "DISCONNESSA"
         item["label"].config(text=text)
 
     def _update_uptime(self):
@@ -620,6 +629,20 @@ class TranscriberGUI:
             self.uptime_label.config(text=f"{h:02d}:{m:02d}:{s:02d}")
         self.root.after(1000, self._update_uptime)
 
+    def _pipeline_thread(self, config):
+        try:
+            from main import run_pipeline
+            run_pipeline(
+                config,
+                event_bus=self.bus,
+                stop_event=self.stop_event,
+                components_ref=self._pipeline_components
+            )
+        except Exception as e:
+            self.bus.emit("error", message=str(e))
+        finally:
+            self.bus.emit("stopped")
+   
     # ------------------------------------------------------------------------
     # FINESTRA DI CONFIGURAZIONE (chiama la classe)
     # ------------------------------------------------------------------------
@@ -634,6 +657,30 @@ class TranscriberGUI:
     # ------------------------------------------------------------------------
     def _reload_config(self):
         """Ricarica config.json e applica le modifiche ai componenti attivi (VAD e filtro) senza riavviare."""
+
+        # FIX: se la pipeline non è nemmeno avviata, non c'è nulla da
+        # ricaricare a caldo.
+        if not self.running:
+            self.error_label.config(
+                text="⚠️ Pipeline non attiva: avvia prima la trascrizione.",
+                fg=ACCENT_AMBER
+            )
+            return
+
+        vad = self._pipeline_components.get("vad")
+        transcriber = self._pipeline_components.get("transcriber")
+
+        # FIX: se run_pipeline non ha ancora popolato i componenti (istanti
+        # subito dopo "Avvia"), evitiamo di procedere con vad/transcriber a
+        # None e ritentiamo automaticamente dopo poco.
+        if vad is None or transcriber is None:
+            self.error_label.config(
+                text="⏳ Pipeline non ancora pronta, riprova tra un istante.",
+                fg=ACCENT_AMBER
+            )
+            self.root.after(300, self._reload_config)
+            return
+
         config_path = os.path.join(os.path.dirname(__file__), "config.json")
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -642,51 +689,50 @@ class TranscriberGUI:
             self.error_label.config(text=f"❌ Errore nel caricamento di config.json: {e}", fg=ACCENT_RED)
             return
 
-        # Aggiorna il VAD se esiste
-        if self.vad is not None:
-            vad_cfg = config.get("vad", {})
-            try:
-                self.vad.aggressiveness = vad_cfg.get("aggressiveness", 1)
-                self.vad.silence_timeout_s = vad_cfg.get("silence_timeout_s", 1.0)
-                self.vad.max_utterance_s = vad_cfg.get("max_utterance_s", 15.0)
-                self.vad.min_segment_duration_s = vad_cfg.get("min_segment_duration_s", 0.6)
-                self.vad.activation_ratio = vad_cfg.get("activation_ratio", 0.4)
-                self.vad.vad.set_mode(self.vad.aggressiveness)
-                self.vad._update_buffers()
+        # Aggiorna il VAD
+        vad_cfg = config.get("vad", {})
+        try:
+            vad.aggressiveness = vad_cfg.get("aggressiveness", 1)
+            vad.silence_timeout_s = vad_cfg.get("silence_timeout_s", 1.0)
+            vad.max_utterance_s = vad_cfg.get("max_utterance_s", 15.0)
+            vad.min_segment_duration_s = vad_cfg.get("min_segment_duration_s", 0.6)
+            vad.activation_ratio = vad_cfg.get("activation_ratio", 0.4)
+            vad.vad.set_mode(vad.aggressiveness)
+            vad._update_buffers()
+            logging.getLogger("AudioTranscriber").info(
+                "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f",
+                vad.aggressiveness, vad.activation_ratio
+            )
+        except Exception as e:
+            self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
+
+        # Aggiorna il Transcriber (filtro)
+        try:
+            filter_cfg = config.get("filter", {})
+            transcriber.apply_filter = filter_cfg.get("enabled", False)
+            transcriber.band_min = filter_cfg.get("band_min", 300)
+            transcriber.band_max = filter_cfg.get("band_max", 3400)
+            # FIX: 'transcriber.SCIPY_AVAILABLE' ora esiste davvero come
+            # attributo d'istanza (impostato in Transcriber.__init__), quindi
+            # questo hasattr non è più sempre False come prima.
+            if transcriber.apply_filter and hasattr(transcriber, 'SCIPY_AVAILABLE') and transcriber.SCIPY_AVAILABLE:
+                from scipy import signal
+                transcriber._filter_b = signal.firwin(65, [transcriber.band_min, transcriber.band_max],
+                                                    fs=transcriber.rate, pass_zero=False)
+                transcriber._filter_a = [1.0]
                 logging.getLogger("AudioTranscriber").info(
-                    "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f",
-                    self.vad.aggressiveness, self.vad.activation_ratio
+                    "Filtro aggiornato: enabled=%s, band=%d-%d Hz",
+                    transcriber.apply_filter, transcriber.band_min, transcriber.band_max
                 )
-            except Exception as e:
-                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
+            else:
+                logging.getLogger("AudioTranscriber").info("Filtro disabilitato o scipy non disponibile.")
+        except Exception as e:
+            self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del filtro: {e}", fg=ACCENT_AMBER)
 
-        # Aggiorna il Transcriber (filtro) se esiste
-        if self.transcriber is not None:
-            try:
-                filter_cfg = config.get("filter", {})
-                self.transcriber.apply_filter = filter_cfg.get("enabled", False)
-                self.transcriber.band_min = filter_cfg.get("band_min", 300)
-                self.transcriber.band_max = filter_cfg.get("band_max", 3400)
-                if self.transcriber.apply_filter and hasattr(self.transcriber, 'SCIPY_AVAILABLE') and self.transcriber.SCIPY_AVAILABLE:
-                    from scipy import signal
-                    self.transcriber._filter_b = signal.firwin(65, [self.transcriber.band_min, self.transcriber.band_max],
-                                                               fs=self.transcriber.rate, pass_zero=False)
-                    self.transcriber._filter_a = [1.0]
-                    logging.getLogger("AudioTranscriber").info(
-                        "Filtro aggiornato: enabled=%s, band=%d-%d Hz",
-                        self.transcriber.apply_filter, self.transcriber.band_min, self.transcriber.band_max
-                    )
-                else:
-                    logging.getLogger("AudioTranscriber").info("Filtro disabilitato o scipy non disponibile.")
-            except Exception as e:
-                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del filtro: {e}", fg=ACCENT_AMBER)
-
-        # Aggiorna la GUI
         self._update_gui_from_config(config)
 
-        # Aggiorna il filtro nello stato sistema
         filter_active = config.get("filter", {}).get("enabled", False)
-        filter_text = f"300-3400 Hz (ON)" if filter_active else "DISABILITATO"
+        filter_text = "300-3400 Hz (ON)" if filter_active else "DISABILITATO"
         self._update_status_item("🔵 Filtro", filter_active, filter_text)
 
         self.error_label.config(text="✅ Configurazione ricaricata e applicata (VAD e filtro aggiornati).", fg=ACCENT_GREEN)
@@ -728,7 +774,7 @@ class TranscriberGUI:
         self._update_status_item("🎤 Microfono", True, "ATTIVO")
         self._update_status_item("🌐 Groq API", True, "CONNESSA")
         filter_active = config.get("filter", {}).get("enabled", False)
-        filter_text = f"300-3400 Hz (ON)" if filter_active else "DISABILITATO"
+        filter_text = "300-3400 Hz (ON)" if filter_active else "DISABILITATO"
         self._update_status_item("🔵 Filtro", filter_active, filter_text)
 
         self._uptime_start = time.time()
@@ -738,21 +784,12 @@ class TranscriberGUI:
             from logger import clear_log_file
             clear_log_file()
 
-        from main import run_pipeline
-        from vad import VADProcessor
-        from transcriber import Transcriber
-        from audio import AudioCapture
-
-        self.vad = VADProcessor(
-            rate=config.get("audio", {}).get("rate", 16000),
-            frame_duration_ms=config.get("audio", {}).get("frame_duration_ms", 30),
-            aggressiveness=config.get("vad", {}).get("aggressiveness", 1),
-            silence_timeout_s=config.get("vad", {}).get("silence_timeout_s", 1.0),
-            max_utterance_s=config.get("vad", {}).get("max_utterance_s", 15.0),
-            min_segment_duration_s=config.get("vad", {}).get("min_segment_duration_s", 0.6),
-            activation_ratio=config.get("vad", {}).get("activation_ratio", 0.4)
-        )
-        self.transcriber = Transcriber(config)
+        # FIX: non creiamo più VADProcessor/Transcriber/AudioCapture qui.
+        # Erano istanze orfane, mai collegate alla pipeline reale (creata
+        # dentro run_pipeline nel thread di background), quindi ogni modifica
+        # fatta su di esse da _reload_config non aveva alcun effetto pratico
+        # e sprecava thread (ogni Transcriber avvia 3 thread in background).
+        self._pipeline_components = {}
 
         self.stop_event = threading.Event()
         self.worker = threading.Thread(
@@ -764,15 +801,14 @@ class TranscriberGUI:
         self._set_status("IN ASCOLTO", ACCENT_GREEN)
         self.worker.start()
         self.error_label.config(text="🎤 Ascolto attivo...", fg=ACCENT_GREEN)
-
-    def _pipeline_thread(self, config):
-        try:
-            from main import run_pipeline
-            run_pipeline(config, event_bus=self.bus, stop_event=self.stop_event)
-        except Exception as e:
-            self.bus.emit("error", message=str(e))
-        finally:
-            self.bus.emit("stopped")
+        def _pipeline_thread(self, config):
+            try:
+                from main import run_pipeline
+                run_pipeline(config, event_bus=self.bus, stop_event=self.stop_event)
+            except Exception as e:
+                self.bus.emit("error", message=str(e))
+            finally:
+                self.bus.emit("stopped")
 
     def _on_stop(self):
         if not self.running:
@@ -809,47 +845,14 @@ class TranscriberGUI:
             )
 
         # Gestione debug log
+        # FIX: prima qui c'era un intero blocco duplicato (import os,
+        # from logger import archive_log_file/clear_log_file, controllo
+        # dimensione file, askyesno, ...) quasi identico a quello dentro
+        # _toggle_debug ma con testi leggermente diversi. Ora entrambi i
+        # punti richiamano lo stesso metodo condiviso, quindi non possono
+        # più divergere nel comportamento.
         if self.debug_enabled:
-            import os
-            from logger import archive_log_file, clear_log_file
-            log_file = "transcriber.log"
-            has_content = False
-            if os.path.exists(log_file) and os.path.getsize(log_file) > 0:
-                has_content = True
-
-            if has_content:
-                if messagebox.askyesno(
-                    "Salva log di debug",
-                    "Il file transcriber.log contiene messaggi di debug.\n"
-                    "Vuoi salvarlo (con timestamp) o eliminarlo?"
-                ):
-                    new_name = archive_log_file()
-                    if new_name:
-                        self.error_label.config(
-                            text=f"✅ Log di debug salvati in: {new_name}",
-                            fg=ACCENT_GREEN
-                        )
-                    else:
-                        self.error_label.config(
-                            text="❌ Errore durante il salvataggio dei log.",
-                            fg=ACCENT_RED
-                        )
-                else:
-                    if clear_log_file():
-                        self.error_label.config(
-                            text="ℹ️ Log di debug eliminati.",
-                            fg=ACCENT_AMBER
-                        )
-                    else:
-                        self.error_label.config(
-                            text="⚠️ Impossibile eliminare il file di log.",
-                            fg=ACCENT_RED
-                        )
-            else:
-                self.error_label.config(
-                    text="ℹ️ Nessun messaggio di debug da salvare.",
-                    fg=FG_DIM
-                )
+            self._prompt_save_debug_log()
 
         self.stop_event.set()
         self.stop_btn.config(state="disabled")
@@ -886,48 +889,70 @@ class TranscriberGUI:
         self.debug_enabled = not self.debug_enabled
         if self.debug_enabled:
             self.debug_btn.config(text="🐞 DEBUG ON", bg=ACCENT_AMBER, fg="#14100a")
-            logging.getLogger("AudioTranscriber").setLevel(logging.DEBUG)
+            # FIX: non tocchiamo più il logger intero (logging.getLogger(...).setLevel),
+            # solo il livello della console. Il file continua a registrare
+            # sempre tutto grazie a logger.py.
+            set_console_debug(True)
             self.debug_window = DebugWindow(self.root)
-            self.error_label.config(text="🐞 Modalità DEBUG attiva. I log verranno gestiti allo stop.", fg=ACCENT_AMBER)
+            self.error_label.config(
+                text="🐞 Modalità DEBUG attiva. I log verranno gestiti allo stop.",
+                fg=ACCENT_AMBER
+            )
         else:
             self.debug_btn.config(text="🐞 DEBUG OFF", bg="#2a2a2a", fg=FG_DIM)
-            logging.getLogger("AudioTranscriber").setLevel(logging.INFO)
+            set_console_debug(False)
             if self.debug_window:
                 self.debug_window.on_close()
                 self.debug_window = None
 
-            import os
-            from logger import archive_log_file, clear_log_file
-            log_file = "transcriber.log"
-            has_content = False
-            if os.path.exists(log_file) and os.path.getsize(log_file) > 0:
-                has_content = True
+            # FIX: stessa logica usata in _on_stop, fattorizzata in un unico
+            # metodo per evitare duplicazione e divergenze future.
+            self._prompt_save_debug_log()
 
-            if has_content:
-                if messagebox.askyesno(
-                    "Salva log di debug",
-                    "Ci sono messaggi di debug in sospeso.\n"
-                    "Vuoi salvarli prima di disattivare il debug?"
-                ):
-                    new_name = archive_log_file()
-                    if new_name:
-                        self.error_label.config(
-                            text=f"✅ Log di debug salvati in: {new_name}",
-                            fg=ACCENT_GREEN
-                        )
-                    else:
-                        self.error_label.config(
-                            text="❌ Errore durante il salvataggio.",
-                            fg=ACCENT_RED
-                        )
-                else:
-                    clear_log_file()
-                    self.error_label.config(
-                        text="ℹ️ Log di debug eliminati.",
-                        fg=ACCENT_AMBER
-                    )
-            self.error_label.config(text="🐞 Debug disattivato.", fg=FG_DIM)
+    def _prompt_save_debug_log(self):
+        """
+        Chiede all'utente se salvare (archiviare) o cancellare il file di
+        log di debug corrente, se contiene qualcosa. Fattorizzato in un
+        unico metodo perché la stessa logica serve sia quando si disattiva
+        il debug dal pulsante, sia quando si ferma la pipeline con il debug
+        ancora attivo.
+        """
+        log_file = "transcriber.log"
+        has_content = os.path.exists(log_file) and os.path.getsize(log_file) > 0
+        if not has_content:
+            self.error_label.config(
+                text="ℹ️ Nessun messaggio di debug da salvare.",
+                fg=FG_DIM
+            )
+            return
 
+        if messagebox.askyesno(
+            "Salva log di debug",
+            "Il file transcriber.log contiene messaggi di debug.\n"
+            "Vuoi salvarlo (con timestamp) o eliminarlo?"
+        ):
+            new_name = archive_log_file()
+            if new_name:
+                self.error_label.config(
+                    text=f"✅ Log di debug salvati in: {new_name}",
+                    fg=ACCENT_GREEN
+                )
+            else:
+                self.error_label.config(
+                    text="❌ Errore durante il salvataggio dei log.",
+                    fg=ACCENT_RED
+                )
+        else:
+            if clear_log_file():
+                self.error_label.config(
+                    text="ℹ️ Log di debug eliminati.",
+                    fg=ACCENT_AMBER
+                )
+            else:
+                self.error_label.config(
+                    text="⚠️ Impossibile eliminare il file di log.",
+                    fg=ACCENT_RED
+                )
     # ------------------------------------------------------------------------
     # POLLING EVENTI
     # ------------------------------------------------------------------------

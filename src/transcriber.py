@@ -33,8 +33,15 @@ INITIAL_PROMPT = (
 
 
 class Transcriber:
-    def __init__(self, config):
+    # FIX: aggiunto 'event_bus=None'. Era stato completamente rimosso
+    # dalla classe (né come parametro né come attributo), quindi anche
+    # passandolo da main.py non sarebbe servito a nulla: qui viene
+    # ricevuto, salvato, e usato più sotto in _print_result e
+    # _metrics_loop per notificare la GUI.
+    def __init__(self, config, event_bus=None):
         logger.debug("Inizializzazione Transcriber...")
+        self.event_bus = event_bus
+
         groq_cfg = config.get("api", {}).get("groq", {})
         self.api_key = groq_cfg.get("api_key", "")
         if not self.api_key:
@@ -219,11 +226,25 @@ class Transcriber:
             print("[Transcriber] Nessun testo riconosciuto.")
         print("-" * 40)
 
+        # FIX: era sparito del tutto. Senza questa emit, la GUI non
+        # riceveva mai l'evento "transcript" e il pannello di
+        # trascrizione restava vuoto, pur continuando a vedere l'output
+        # su console (il print() sopra, indipendente dall'event_bus).
+        if self.event_bus:
+            self.event_bus.emit("transcript", text=text)
+
     def _metrics_loop(self):
-        """Stampa metriche di riepilogo ogni 10 secondi e monitoraggio coda in debug."""
+        """
+        Stampa metriche di riepilogo ogni 10 secondi e monitoraggio coda in debug.
+
+        FIX: usa stop_event.wait() invece di time.sleep(1), così allo
+        shutdown il thread si sveglia subito quando stop_event viene
+        settato, invece di aspettare fino a 1s in più prima di
+        accorgersene (il successivo metrics_thread.join(timeout=1.0) in
+        stop() aveva quindi più probabilità di andare in timeout inutilmente).
+        """
         last_queue_log = time.time()
-        while not self.stop_event.is_set():
-            time.sleep(1)
+        while not self.stop_event.wait(timeout=1.0):
             if time.time() - self.metrics["last_log_time"] >= 10:
                 with self.metrics_lock:
                     submitted = self.metrics["segments_submitted"]
@@ -234,6 +255,16 @@ class Transcriber:
                     self.metrics["last_log_time"] = time.time()
                 logger.info("📊 Metriche: inviati=%d, completati=%d, falliti=%d, coda=%d, tempo_medio=%.2fs",
                             submitted, completed, failed, queue_size, avg_time)
+
+                # FIX: era sparito del tutto. Senza questa emit, la GUI
+                # non riceveva mai l'evento "metrics" e i contatori nel
+                # pannello "METRICHE" restavano fermi a 0.
+                if self.event_bus:
+                    self.event_bus.emit(
+                        "metrics",
+                        submitted=submitted, completed=completed, failed=failed,
+                        queue_size=queue_size, avg_time=avg_time
+                    )
 
             if time.time() - last_queue_log >= 2:
                 last_queue_log = time.time()
@@ -291,6 +322,6 @@ class Transcriber:
         with self._result_lock:
             self._result_lock.notify_all()
         self.printer_thread.join(timeout=self.reorder_timeout_s + 1.0)
-        self.metrics_thread.join(timeout=1.0)
+        self.metrics_thread.join(timeout=1.5)
         self.session.close()
         logger.info("Transcriber fermato.")
