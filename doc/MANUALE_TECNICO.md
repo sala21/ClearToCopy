@@ -1,8 +1,6 @@
 # Manuale Tecnico — ATC Radio Transcriber v3 (`v3_only_api`)
 
 **Versione documento:** 1.0
-**Versione codebase di riferimento:** v3_only_api (solo backend Groq API, GUI inclusa)
-
 ---
 
 ## Indice
@@ -23,22 +21,12 @@
    8.6 [Finestra di configurazione (ConfigWindow)](#86-finestra-di-configurazione-configwindow)
 9. [Sistema di logging e debug](#9-sistema-di-logging-e-debug)
 10. [Gestione file e dati sensibili](#10-gestione-file-e-dati-sensibili)
-11. [Problemi noti risolti (changelog tecnico)](#11-problemi-noti-risolti-changelog-tecnico)
-12. [Troubleshooting](#12-troubleshooting)
-13. [Possibili sviluppi futuri](#13-possibili-sviluppi-futuri)
 
 ---
 
 ## 1. Panoramica generale
 
 **ATC Radio Transcriber** è un'applicazione Python per la trascrizione in tempo reale di comunicazioni radio in banda aeronautica (ATC — Air Traffic Control). Cattura audio da un dispositivo di input (microfono o linea audio collegata a una radio/scanner), lo segmenta, lo pre-elabora e lo invia all'API di trascrizione di **Groq** (modelli Whisper), restituendo il testo trascritto in tempo reale sia su console che su un'interfaccia grafica dedicata.
-
-La versione corrente (**v3**) rappresenta un'evoluzione rispetto alle versioni precedenti (v1, v2):
-
-- **Nessuna inferenza locale**: le versioni precedenti usavano `faster-whisper` in locale come fallback; v3 usa **esclusivamente l'API Groq**, eliminando la complessità e il carico computazionale locale.
-- **Elaborazione concorrente**: le richieste all'API sono gestite tramite un pool di thread (`ThreadPoolExecutor`), permettendo più chiamate Groq in parallelo invece di una coda sequenziale.
-- **GUI dedicata**: interfaccia grafica in `tkinter` con tema scuro ("AeroVoice"), VU meter, metriche in tempo reale, console di debug e salvataggio automatico/manuale delle trascrizioni.
-- **Doppia modalità di segmentazione**: VAD classico (rilevamento vocale) oppure modalità "radio" a finestra temporale fissa con taglio intelligente sui punti di minima energia.
 
 ### Casi d'uso tipici
 
@@ -53,61 +41,61 @@ La versione corrente (**v3**) rappresenta un'evoluzione rispetto alle versioni p
 [Microfono / Radio]
         │  (audio PCM in ingresso)
         ▼
-┌─────────────────────┐
+┌────────────────│─────┐
 │   AudioCapture       │  audio.py
 │   (callback PyAudio) │
 └─────────┬────────────┘
           │ frame da 30ms → audio_queue (thread-safe)
           ▼
-┌─────────────────────────────────────────────┐
-│              run_pipeline()                  │  main.py
-│  Legge i frame dalla coda e li instrada       │
-│  verso una delle due modalità operative:      │
-└───────────┬───────────────────┬──────────────┘
-            │                   │
-   modalità VAD           modalità RADIO
-            │                   │
-            ▼                   ▼
-   ┌────────────────┐   ┌────────────────────┐
-   │ VADProcessor    │   │ _run_radio_mode()   │
-   │ (vad.py)        │   │ (main.py)           │
-   │ Rileva inizio/  │   │ Segmentazione a      │
-   │ fine parlato    │   │ finestra fissa con    │
-   │                 │   │ taglio su minima       │
-   │                 │   │ energia + gate RMS     │
-   └────────┬────────┘   └──────────┬─────────┘
-            │  segmento audio (int16)          │
-            └───────────────┬───────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    run_pipeline()                            │  main.py
+│           Legge i frame dalla coda e li instrada             │
+│           verso una delle due modalità operative:            │
+└───────────┬───────────────────────────────────┬──────────────┘
+            │                                   │
+   modalità VAD                          modalità RADIO
+            │                                   │
+            ▼                                   ▼
+    ┌────────────────┐               ┌────────────────────┐
+    │ VADProcessor   │               │ _run_radio_mode()  │
+    │ (vad.py)       │               │ (main.py)          │
+    │ Rileva inizio/ │               │ Segmentazione a    │
+    │ fine parlato   │               │ finestra fissa con │
+    │                │               │ taglio su minima   │
+    │                │               │ energia + gate RMS │
+    └───────┬────────┘               └──────────┬─────────┘
+            │  segmento audio (int16)           │
+            └────────────────┬──────────────────┘
                              ▼
                   ┌─────────────────────┐
-                  │   Transcriber        │  transcriber.py
-                  │   .enqueue(audio)     │
-                  └──────────┬───────────┘
+                  │   Transcriber       │  transcriber.py
+                  │   .enqueue(audio)   │
+                  └──────────┬──────────┘
                              ▼
-        ┌───────────────────────────────────────────┐
+        ┌─────────────────────────────────────────────┐
         │  Dispatcher thread                          │
-        │  preleva dalla coda e sottomette al pool     │
+        │  preleva dalla coda e sottomette al pool    │
         └───────────────────┬─────────────────────────┘
-                             ▼
-        ┌───────────────────────────────────────────┐
-        │  N Worker Groq (ThreadPoolExecutor)          │
-        │  1. Filtro passa-banda (opzionale)           │
-        │  2. Encoding FLAC/WAV                        │
-        │  3. Chiamata HTTP API Groq (whisper)         │
-        │  4. Anti-loop (dedup testo ripetuto breve)   │
+                            ▼
+        ┌─────────────────────────────────────────────┐
+        │  N Worker Groq (ThreadPoolExecutor)         │
+        │  1. Filtro passa-banda (opzionale)          │
+        │  2. Encoding FLAC/WAV                       │
+        │  3. Chiamata HTTP API Groq (whisper)        │
+        │  4. Anti-loop (dedup testo ripetuto breve)  │
         └───────────────────┬─────────────────────────┘
-                             ▼
-        ┌───────────────────────────────────────────┐
+                            ▼
+        ┌──────────────────────────────────────────────┐
         │  Printer thread (min-heap di riordino)       │
-        │  Ristabilisce l'ordine cronologico dei        │
-        │  segmenti anche se le risposte Groq arrivano  │
-        │  fuori sequenza (concorrenza)                 │
-        └───────────────────┬─────────────────────────┘
-                             ▼
+        │  Ristabilisce l'ordine cronologico dei       │
+        │  segmenti anche se le risposte Groq arrivano │
+        │  fuori sequenza (concorrenza)                │
+        └───────────────────┬──────────────────────────┘
+                            ▼
               ┌─────────────────────────────┐
-              │  Output                       │
-              │  • Console (stdout)            │
-              │  • EventBus → GUI              │
+              │  Output                     │
+              │  • Console (stdout)         │
+              │  • EventBus → GUI           │
               └─────────────────────────────┘
 ```
 
@@ -483,23 +471,6 @@ Se questi file sono già stati committati in passato, `.gitignore` non li rimuov
 
 ---
 
-## 11. Problemi noti risolti (changelog tecnico)
-
-Questa sezione documenta le correzioni applicate durante lo sviluppo della v3, utile per capire il "perché" di alcune scelte non ovvie nel codice:
-
-| Problema | Causa | Soluzione applicata |
-|---|---|---|
-| Tagli a metà parola in modalità radio | Segmentazione a durata rigorosamente fissa, senza considerare i confini naturali del parlato | `_find_best_cut_point()`: ricerca del punto di minima energia RMS in una finestra prima del bordo del segmento |
-| Gate di silenzio inefficace | Soglia RMS di default non calibrata sui livelli reali osservati | Soglia (`silence_rms_threshold`) ritarata sui valori RMS osservati in test live (parlato ~218–230, silenzio ~1–5 in un contesto; **va ricalibrata per ogni setup audio**, dato che dipende da guadagno microfono/linea) |
-| Overflow int16 / click udibili | Il filtro FIR passa-banda può produrre overshoot (ripple) anche su segnale normalizzato; la conversione diretta a int16 su valori fuori [-1,1] causa wraparound invece di saturazione | Clip esplicito a [-1, 1] subito dopo il filtraggio (`transcriber.py`) e clip di sicurezza in `_ensure_int16()` (`utils.py`) |
-| Doppio filtraggio passa-banda | Il filtro era applicato sia in `preprocess_radio_audio()` (main.py) sia in `Transcriber` | Consolidato in un unico punto: solo `Transcriber._process_segment()` applica il filtro; `preprocess_radio_audio()` gestisce solo AGC e limitatore |
-| "Compressore" fittizio | Un precedente limitatore era in realtà un hard-clip mascherato da compressore, che introduceva distorsione armonica udibile | Sostituito con `_soft_limiter()`: compressione soft-knee reale, che attenua gradualmente solo l'eccesso oltre soglia mantenendo continuità del segnale |
-| `INITIAL_PROMPT` generico | Un prompt generico ("Transcription of aviation radio communication") perdeva gran parte dell'aiuto su terminologia tecnica e alfabeto fonetico | Ripristinato prompt esteso con fraseologia ATC completa, alfabeto NATO e pronuncia numerica aeronautica |
-| Log troppo verbosi in produzione | Metriche stampate a livello che intasava la console anche in uso normale | Spostate a livello `debug` |
-| `webrtcvad` non si importa su Windows | Dipende da `pkg_resources`, rimosso in `setuptools ≥ 82` | Pin esplicito `setuptools==81.0.0` in `requirements.txt` |
-
----
-
 ## 12. Troubleshooting
 
 | Sintomo | Possibile causa | Verifica / soluzione |
@@ -513,20 +484,6 @@ Questa sezione documenta le correzioni applicate durante lo sviluppo della v3, u
 | Qualità di trascrizione bassa quando l'audio viene riprodotto via altoparlante e ricatturato da microfono ("recapture acustico") | La riproduzione/ricattura acustica introduce rumore ambientale, riverbero e perdita di banda rispetto a un collegamento digitale/linea diretta | Preferire un collegamento diretto (cavo linea, interfaccia audio USB) invece del percorso altoparlante→microfono, quando possibile |
 | Ripetizioni di parole ai bordi dei segmenti (modalità radio) | Effetto collaterale noto dell'`overlap_s`: il contesto ripetuto tra segmenti consecutivi non viene "cucito" a livello testuale | Comportamento noto e documentato nel codice; ridurre `overlap_s` attenua il fenomeno a scapito di un rischio leggermente maggiore di perdita di parole al bordo |
 | `archive_log_file()` solleva `NameError: name 'datetime' is not defined` | Import mancante in `logger.py` | Aggiungere `from datetime import datetime` in testa al file |
-
----
-
-## 13. Possibili sviluppi futuri
-
-Non risultano decisioni esplicite prese nel progetto su questo punto, ma dall'analisi del codice emergono alcune aree di miglioramento naturale:
-
-- **Cucitura testuale (text stitching)** dei segmenti in overlap, per eliminare le ripetizioni di parole ai bordi invece di limitarsi a ridurre `overlap_s`
-- **Retry con backoff esponenziale** sulle chiamate Groq fallite per timeout/errore HTTP (attualmente il segmento viene semplicemente perso al primo fallimento)
-- **Calibrazione automatica/assistita** della soglia di silenzio (`silence_rms_threshold`), ad esempio con una fase di calibrazione iniziale che misura il rumore di fondo reale del setup
-- **Persistenza della configurazione da GUI**: attualmente la sezione "Configurazione rapida" della GUI mostra valori in gran parte statici/hardcoded (es. "VAD Sensibilità: 0.4", "Worker Groq: 5") invece di leggerli dinamicamente da `config.json`
-- **Test automatizzati** sulla pipeline (attualmente il workflow è basato su test live con audio reale e ispezione manuale dei log)
-- Correzione del piccolo bug di visualizzazione in `_toggle_debug` (messaggio di conferma salvataggio log sovrascritto immediatamente, vedi §8.5)
-- Import mancante `datetime` in `logger.py` (vedi §12)
 
 ---
 
