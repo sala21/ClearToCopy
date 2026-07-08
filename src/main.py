@@ -12,20 +12,7 @@ logger = get_logger()
 
 
 def run_pipeline(config, event_bus=None, stop_event=None, components_ref=None):
-    """
-    Avvia cattura audio + VAD + trascrizione e li lascia girare finché lo
-    stream è attivo o finché 'stop_event' non viene settato dall'esterno.
-
-    - event_bus: se fornito, viene propagato al Transcriber così che
-      trascrizioni e metriche vengano emesse anche verso la GUI (oltre a
-      console/log, che avvengono comunque indipendentemente da questo).
-    - components_ref: dict opzionale (es. fornito dalla GUI). Se presente,
-      viene popolato con i riferimenti reali a 'audio', 'vad' e
-      'transcriber' non appena creati, PRIMA di entrare nel loop
-      bloccante. Questo permette al chiamante (es. _reload_config nella
-      GUI) di agire sulle istanze REALMENTE in esecuzione, invece di
-      crearne di proprie scollegate da questa pipeline.
-    """
+    
     if stop_event is None:
         stop_event = threading.Event()
 
@@ -43,11 +30,13 @@ def run_pipeline(config, event_bus=None, stop_event=None, components_ref=None):
 
     audio = AudioCapture(rate=rate, channels=channels, chunk=chunk)
 
-    # FIX: event_bus ora viene propagato al Transcriber. Prima veniva
-    # creato con Transcriber(config), senza event_bus: il Transcriber
-    # continuava a stampare/loggare su console (da qui la trascrizione
-    # visibile in CLI) ma non emetteva mai nulla verso la GUI.
-    transcriber = Transcriber(config, event_bus=event_bus)
+    try:
+        transcriber = Transcriber(config, event_bus=event_bus)
+    except Exception:
+        audio.stop()
+        raise
+
+    transcriber.set_audio_reference(audio)
 
     vad = VADProcessor(
         rate=rate,

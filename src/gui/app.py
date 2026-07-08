@@ -346,39 +346,50 @@ class TranscriberGUI:
         # Aggiorna il VAD
         vad_cfg = config.get("vad", {})
         try:
-            vad.aggressiveness = vad_cfg.get("aggressiveness", 1)
-            vad.silence_timeout_s = vad_cfg.get("silence_timeout_s", 1.0)
-            vad.max_utterance_s = vad_cfg.get("max_utterance_s", 15.0)
-            vad.min_segment_duration_s = vad_cfg.get("min_segment_duration_s", 0.6)
-            vad.activation_ratio = vad_cfg.get("activation_ratio", 0.4)
-            vad.vad.set_mode(vad.aggressiveness)
-            vad._update_buffers()
+            vad.update_params(
+                aggressiveness=vad_cfg.get("aggressiveness", 1),
+                silence_timeout_s=vad_cfg.get("silence_timeout_s", 1.0),
+                max_utterance_s=vad_cfg.get("max_utterance_s", 15.0),
+                min_segment_duration_s=vad_cfg.get("min_segment_duration_s", 0.6),
+                activation_ratio=vad_cfg.get("activation_ratio", 0.4),
+            )
             logging.getLogger("AudioTranscriber").info(
                 "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f",
                 vad.aggressiveness, vad.activation_ratio
             )
         except Exception as e:
             self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
-
+        
         # Aggiorna il Transcriber (filtro)
         try:
             filter_cfg = config.get("filter", {})
             transcriber.apply_filter = filter_cfg.get("enabled", False)
             transcriber.band_min = filter_cfg.get("band_min", 300)
             transcriber.band_max = filter_cfg.get("band_max", 3400)
-            if transcriber.apply_filter and hasattr(transcriber, 'SCIPY_AVAILABLE') and transcriber.SCIPY_AVAILABLE:
-                from scipy import signal
-                transcriber._filter_b = signal.firwin(65, [transcriber.band_min, transcriber.band_max],
-                                                      fs=transcriber.rate, pass_zero=False)
-                transcriber._filter_a = [1.0]
-                logging.getLogger("AudioTranscriber").info(
-                    "Filtro aggiornato: enabled=%s, band=%d-%d Hz",
-                    transcriber.apply_filter, transcriber.band_min, transcriber.band_max
-                )
-            else:
-                logging.getLogger("AudioTranscriber").info("Filtro disabilitato o scipy non disponibile.")
+            transcriber._recompute_filter()
+            logging.getLogger("AudioTranscriber").info(
+                "Filtro aggiornato: enabled=%s, band=%d-%d Hz",
+                transcriber.apply_filter, transcriber.band_min, transcriber.band_max
+            )
         except Exception as e:
             self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del filtro: {e}", fg=ACCENT_AMBER)
+
+        try:
+            groq_cfg = config.get("api", {}).get("groq", {})
+            transcriber.update_groq_settings(
+                model=groq_cfg.get("model"),
+                timeout_s=groq_cfg.get("timeout_s"),
+                use_flac=groq_cfg.get("use_flac", True)
+            )
+            if groq_cfg.get("max_concurrent_requests") and \
+            groq_cfg["max_concurrent_requests"] != transcriber.executor._max_workers:
+                self.error_label.config(
+                    text="⚠️ 'max_concurrent_requests' modificato: richiede il riavvio della trascrizione per avere effetto.",
+                    fg=ACCENT_AMBER
+                )
+        except Exception as e:
+            self.error_label.config(text=f"⚠️ Errore nell'aggiornamento dei parametri Groq: {e}", fg=ACCENT_AMBER)
+
 
         self._update_gui_from_config(config)
 
@@ -391,7 +402,10 @@ class TranscriberGUI:
 
     def _update_gui_from_config(self, config):
         groq_cfg = config.get("api", {}).get("groq", {})
-        mode = "RADIO (bypass VAD)" if config.get("radio", {}).get("bypass_vad") else "VAD classico"
+        radio_requested = config.get("radio", {}).get("bypass_vad", False)
+        mode = "VAD classico"
+        if radio_requested:
+            mode = "VAD classico (⚠️ radio.bypass_vad=true ma non ancora implementato)"
         self.mode_label.config(
             text=f"Modello: {groq_cfg.get('model', '?')}   •   Modalità: {mode}"
         )
@@ -416,7 +430,10 @@ class TranscriberGUI:
             return
 
         groq_cfg = config.get("api", {}).get("groq", {})
-        mode = "RADIO (bypass VAD)" if config.get("radio", {}).get("bypass_vad") else "VAD classico"
+        radio_requested = config.get("radio", {}).get("bypass_vad", False)
+        mode = "VAD classico"
+        if radio_requested:
+            mode = "VAD classico (⚠️ radio.bypass_vad=true ma non ancora implementato)"
         self.mode_label.config(
             text=f"Modello: {groq_cfg.get('model', '?')}   •   Modalità: {mode}"
         )

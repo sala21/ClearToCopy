@@ -1,6 +1,7 @@
 import collections
 import numpy as np
 import webrtcvad
+import threading
 from logger import get_logger
 
 logger = get_logger()
@@ -18,6 +19,7 @@ class VADProcessor:
         min_segment_duration_s=1.2,    # durata minima per considerare il segmento valido
         activation_ratio=0.6           # % di frame vocali per attivare il segmento
     ):
+        self._state_lock = threading.Lock()
         self.rate = rate
         self.frame_duration_ms = frame_duration_ms
         self.vad = webrtcvad.Vad(aggressiveness)
@@ -85,58 +87,60 @@ class VADProcessor:
         self._voiced_frame_count += 1
 
     def process_frame(self, frame):
-        is_speech = self.vad.is_speech(frame, self.rate)
-        segment_completed = False
+        with self._state_lock:
+            is_speech = self.vad.is_speech(frame, self.rate)
+            segment_completed = False
 
-        if not self.triggered:
-            if len(self.ring_buffer) == self.ring_buffer_maxlen:
-                _, old_is_speech = self.ring_buffer.popleft()
-                if old_is_speech:
-                    self._voiced_count -= 1
+            if not self.triggered:
+                if len(self.ring_buffer) == self.ring_buffer_maxlen:
+                    _, old_is_speech = self.ring_buffer.popleft()
+                    if old_is_speech:
+                        self._voiced_count -= 1
 
-            self.ring_buffer.append((frame, is_speech))
-            if is_speech:
-                self._voiced_count += 1
+                self.ring_buffer.append((frame, is_speech))
+                if is_speech:
+                    self._voiced_count += 1
 
-            if self._voiced_count > self.activation_ratio * self.ring_buffer_maxlen:
-                self.triggered = True
-                logger.debug("VAD attivato (inizio parlato).")
-                for f, _ in self.ring_buffer:
-                    self._append_voiced_frame(f)
-                self.ring_buffer.clear()
-                self._voiced_count = 0
-        else:
-            self._append_voiced_frame(frame)
-
-            if len(self.ring_buffer_silence) == self.silence_ring_maxlen:
-                _, old_is_speech = self.ring_buffer_silence.popleft()
-                if not old_is_speech:
-                    self._unvoiced_count -= 1
-
-            self.ring_buffer_silence.append((frame, is_speech))
-            if not is_speech:
-                self._unvoiced_count += 1
-
-            end_of_transmission = (self._unvoiced_count == self.silence_ring_maxlen)
-            forced_cutoff = self._voiced_frame_count >= self.max_voiced_frames
-
-            if end_of_transmission or forced_cutoff:
-                self._flush_segment()
-                segment_completed = True
-                if forced_cutoff and not end_of_transmission:
-                    logger.debug("VAD: taglio forzato per durata massima.")
+                if self._voiced_count > self.activation_ratio * self.ring_buffer_maxlen:
                     self.triggered = True
-                    self.ring_buffer_silence.clear()
-                    self._unvoiced_count = 0
-                else:
-                    logger.debug("VAD: fine parlato.")
-                    self.triggered = False
+                    logger.debug("VAD attivato (inizio parlato).")
+                    for f, _ in self.ring_buffer:
+                        self._append_voiced_frame(f)
+                    self.ring_buffer.clear()
+                    self._voiced_count = 0
+            else:
+                self._append_voiced_frame(frame)
 
-        return segment_completed
+                if len(self.ring_buffer_silence) == self.silence_ring_maxlen:
+                    _, old_is_speech = self.ring_buffer_silence.popleft()
+                    if not old_is_speech:
+                        self._unvoiced_count -= 1
+
+                self.ring_buffer_silence.append((frame, is_speech))
+                if not is_speech:
+                    self._unvoiced_count += 1
+
+                end_of_transmission = (self._unvoiced_count == self.silence_ring_maxlen)
+                forced_cutoff = self._voiced_frame_count >= self.max_voiced_frames
+
+                if end_of_transmission or forced_cutoff:
+                    flushed = self._flush_segment()
+                    segment_completed = bool(flushed)
+                    segment_completed = True
+                    if forced_cutoff and not end_of_transmission:
+                        logger.debug("VAD: taglio forzato per durata massima.")
+                        self.triggered = True
+                        self.ring_buffer_silence.clear()
+                        self._unvoiced_count = 0
+                    else:
+                        logger.debug("VAD: fine parlato.")
+                        self.triggered = False
+
+            return segment_completed
 
     def _flush_segment(self):
         if self._voiced_frame_count == 0:
-            return
+            return False
 
         audio_int16 = self._voiced_buffer[:self._voiced_write_pos].copy()
         self._voiced_write_pos = 0
@@ -151,11 +155,29 @@ class VADProcessor:
             logger.warning("Segmento troppo breve (%.2fs) – scartato.", duration)
             self.ring_buffer_silence.clear()
             self._unvoiced_count = 0
-            return
+            return False
 
         logger.debug("Segmento VAD pronto: durata=%.2fs, campioni=%d", duration, len(audio_int16))
         if self.on_transcription_ready:
             self.on_transcription_ready(audio_int16)
+            return True
 
         self.ring_buffer_silence.clear()
         self._unvoiced_count = 0
+
+    def update_params(self, aggressiveness, silence_timeout_s, max_utterance_s,
+                  min_segment_duration_s, activation_ratio):
+        """Aggiorna i parametri VAD in modo thread-safe."""
+        with self._state_lock:
+            # Se c'è un segmento in corso, chiudilo prima di ricreare i buffer
+            if self.triggered and self._voiced_frame_count > 0:
+                self._flush_segment()
+                self.triggered = False
+
+            self.aggressiveness = aggressiveness
+            self.silence_timeout_s = silence_timeout_s
+            self.max_utterance_s = max_utterance_s
+            self.min_segment_duration_s = min_segment_duration_s
+            self.activation_ratio = activation_ratio
+            self.vad.set_mode(aggressiveness)
+            self._update_buffers()
