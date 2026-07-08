@@ -3,8 +3,8 @@ import sys
 import json
 import os
 from datetime import datetime
+from paths import CONFIG_PATH, LOG_FILE
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 debug_config = {
     "enabled": False,
     "log_to_file": True,
@@ -17,8 +17,6 @@ try:
         debug_config.update(config.get("debug", {}))
 except Exception:
     pass
-
-LOG_FILE = "transcriber.log"
 
 
 def archive_log_file():

@@ -5,13 +5,12 @@ import os
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import scrolledtext, messagebox
 import json
 import logging
 
 from config import load_config
-from config import BASE_DIR
-from main import run_pipeline
+from paths import BASE_DIR
 from events import EventBus
 from logger import archive_log_file, clear_log_file, set_console_debug
 

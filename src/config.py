@@ -3,16 +3,10 @@ import os
 import sys
 from logger import get_logger
 
+from paths import CONFIG_PATH
+
 logger = get_logger()
 
-def get_base_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    else:
-        return os.path.dirname(os.path.abspath(__file__))
-
-BASE_DIR = get_base_dir()
-CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 def load_config():
     logger.info("Cerco file in: %s", CONFIG_PATH)

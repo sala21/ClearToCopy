@@ -5,7 +5,7 @@ import os
 import json
 import tkinter as tk
 from .theme import *
-from config import BASE_DIR
+from paths import CONFIG_PATH
 
 class ConfigWindow:
     def __init__(self, master, app_ref):
@@ -20,14 +20,13 @@ class ConfigWindow:
         self.window.grab_set()
         self.window.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.config_path = os.path.join(BASE_DIR, "config.json")
         self.config_data = self._load_config()
         self.entries = {}
         self._build_ui()
 
     def _load_config(self):
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
@@ -168,7 +167,7 @@ class ConfigWindow:
 
     def _save_config_with_patch(self, patch):
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 config = json.load(f)
         except Exception:
             config = {}
@@ -190,7 +189,7 @@ class ConfigWindow:
                 for key, value in patch["api"]["groq"].items():
                     config["api"]["groq"][key] = value
 
-        with open(self.config_path, "w", encoding="utf-8") as f:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
 
         return config
