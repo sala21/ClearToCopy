@@ -9,7 +9,7 @@ from .theme import BG, FG, FONT_MONO
 class DebugWindow:
     def __init__(self, master):
         self.window = tk.Toplevel(master)
-        self.window.title("🐞 Debug Log - AeroVoice Transcriber")
+        self.window.title("🐞 Debug Log")
         self.window.geometry("700x450")
         self.window.minsize(500, 300)
         self.window.configure(bg=BG)

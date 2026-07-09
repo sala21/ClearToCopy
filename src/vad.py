@@ -165,8 +165,7 @@ class VADProcessor:
         self.ring_buffer_silence.clear()
         self._unvoiced_count = 0
 
-    def update_params(self, aggressiveness, silence_timeout_s, max_utterance_s,
-                  min_segment_duration_s, activation_ratio):
+    def update_params(self, aggressiveness, silence_timeout_s, max_utterance_s, min_segment_duration_s, activation_ratio):
         """Aggiorna i parametri VAD in modo thread-safe."""
         with self._state_lock:
             # Se c'è un segmento in corso, chiudilo prima di ricreare i buffer

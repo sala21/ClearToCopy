@@ -1,7 +1,4 @@
-import sys
 import threading
-import time
-import numpy as np
 from config import load_config
 from audio import AudioCapture
 from vad import VADProcessor
@@ -9,7 +6,6 @@ from transcriber import Transcriber
 from logger import get_logger
 
 logger = get_logger()
-
 
 def run_pipeline(config, event_bus=None, stop_event=None, components_ref=None):
     
@@ -48,10 +44,6 @@ def run_pipeline(config, event_bus=None, stop_event=None, components_ref=None):
         activation_ratio=activation_ratio
     )
 
-    # FIX: espone i componenti reali al chiamante (es. la GUI), così chi
-    # vuole modificarli "a caldo" (vedi _reload_config in gui_main.py)
-    # agisce sulle istanze che stanno davvero girando, non su copie
-    # orfane create altrove e mai collegate a questa pipeline.
     if components_ref is not None:
         components_ref["audio"] = audio
         components_ref["vad"] = vad

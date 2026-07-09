@@ -1,6 +1,3 @@
-# gui/app.py
-# Applicazione principale (TranscriberGUI) – tutta la logica di stato, pipeline, eventi
-
 import os
 import threading
 import time
@@ -18,8 +15,8 @@ from .theme import *
 from .debug_window import DebugWindow
 from .config_window import ConfigWindow
 
-
 class TranscriberGUI:
+
     def __init__(self, root):
         self.root = root
         self.bus = EventBus()
@@ -34,8 +31,7 @@ class TranscriberGUI:
         self.debug_window = None
         self.config_window = None
 
-        # Riferimenti ai componenti della pipeline (popolati da run_pipeline)
-        self._pipeline_components = {}
+        self._pipeline_components = {}      # Riferimenti ai componenti della pipeline (popolati da run_pipeline)
 
         self.transcript_buffer = []
         self.autosave_interval = 10

@@ -31,7 +31,6 @@ def archive_log_file():
     except Exception:
         return None
 
-
 def clear_log_file():
     """Svuota il file di log (cancella il contenuto)."""
     if os.path.exists(LOG_FILE):
@@ -48,12 +47,7 @@ def clear_log_file():
 # CONFIGURAZIONE DEL LOGGER
 # =============================================
 logger = logging.getLogger("AudioTranscriber")
-logger.setLevel(logging.DEBUG)  # Il logger raccoglie SEMPRE tutto: il
-# filtraggio di cosa mostrare avviene sui singoli handler (console/file),
-# non qui. Se questo livello venisse abbassato a INFO, i record DEBUG
-# verrebbero scartati PRIMA di raggiungere qualsiasi handler, rompendo
-# sia la console sia il file contemporaneamente — per questo la GUI non
-# deve mai toccare 'logger.setLevel(...)' (vedi set_console_debug sotto).
+logger.setLevel(logging.DEBUG)  #NON MODIFICARE
 
 # --- Livello di base della console, preso da config.json ---
 _BASE_CONSOLE_LEVEL = getattr(
@@ -62,8 +56,6 @@ _BASE_CONSOLE_LEVEL = getattr(
 
 # --- Handler per la console (schermo) ---
 console_handler = logging.StreamHandler(sys.stdout)
-# FIX: rispetta anche il flag 'debug.enabled' di config.json all'avvio
-# (in precedenza veniva ignorato e si partiva sempre da console_level).
 if debug_config.get("enabled", False):
     console_handler.setLevel(logging.DEBUG)
 else:
@@ -79,11 +71,6 @@ logger.addHandler(console_handler)
 # --- Handler per il file (opzionale) ---
 if debug_config.get("log_to_file", True):
     file_handler = logging.FileHandler(LOG_FILE, mode='w', encoding="utf-8")
-    # FIX: il file deve registrare SEMPRE tutto, compreso il DEBUG,
-    # indipendentemente da cosa viene mostrato a console. In una versione
-    # precedente questo era stato impostato a INFO, quindi la DebugWindow
-    # nella GUI (che tail-a proprio questo file) non mostrava mai i
-    # messaggi di debug anche con "DEBUG ON".
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -97,15 +84,9 @@ else:
 
 def set_console_debug(enabled):
     """
-    Attiva/disattiva la verbosità DEBUG sulla SOLA console, senza toccare
-    il logger principale (che resta sempre a DEBUG) né il file_handler
-    (che deve continuare a registrare sempre tutto). Questa è l'unica
-    funzione che la GUI deve usare per il toggle del debug — non deve mai
-    chiamare logging.getLogger("AudioTranscriber").setLevel(...)
-    direttamente, altrimenti rompe la registrazione su file.
+    Attiva/disattiva la verbosità DEBUG sulla SOLA console
     """
     console_handler.setLevel(logging.DEBUG if enabled else _BASE_CONSOLE_LEVEL)
-
 
 def get_logger():
     return logger

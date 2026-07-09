@@ -7,7 +7,6 @@ from paths import CONFIG_PATH
 
 logger = get_logger()
 
-
 def load_config():
     logger.info("Cerco file in: %s", CONFIG_PATH)
     if not os.path.exists(CONFIG_PATH):
