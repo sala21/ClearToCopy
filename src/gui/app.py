@@ -6,6 +6,13 @@ from tkinter import scrolledtext, messagebox
 import json
 import logging
 
+try:
+    from PIL import Image, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+    print("Pillow non installato. Non sarà possibile visualizzare l'immagine dell'aereo.")
+
 from config import load_config
 from paths import BASE_DIR
 from events import EventBus
@@ -31,6 +38,8 @@ class TranscriberGUI:
         self.debug_enabled = False
         self.debug_window = None
         self.config_window = None
+        self.airplane_img = None
+        self.airplane_img_tk = None
 
         self._pipeline_components = {}
 
@@ -325,6 +334,23 @@ class TranscriberGUI:
             cursor="hand2",
             bd=0
         ).pack(fill="x", padx=10, pady=4)
+
+        # --- Area decorativa (occupa lo spazio rimanente) ---
+        self.decor_frame = tk.Frame(self.sidebar_frame, bg=PANEL_BG)
+        self.decor_frame.pack(fill="both", expand=True)
+
+        # Canvas per l'immagine dell'aereo
+        self.canvas = tk.Canvas(self.decor_frame, bg=PANEL_BG, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+
+        # Firma in basso
+        tk.Label(self.decor_frame, text="@author: sala21", font=FONT_SMALL,
+                fg=FG_DIM, bg=PANEL_BG).pack(side="bottom", pady=5)
+
+        # Carica l'immagine se Pillow è disponibile
+        if HAS_PIL:
+            self._load_airplane_image()
+            self.canvas.bind("<Configure>", self._draw_airplane)
 
         self._uptime_start = time.time()
         self._update_uptime()
@@ -762,6 +788,58 @@ class TranscriberGUI:
         self.transcript.config(state="disabled")
         if text:
             self.transcript_buffer.append(f"[{ts}] {text}")
+
+
+    # ------------------------------------------------------------------------
+    # INSERIMENTO IMMAGINE DI RIEMPIMENTO DELLA SIDEBAR
+    # ------------------------------------------------------------------------
+    def _load_airplane_image(self):
+        """Carica l'immagine PNG (trasparente) da file."""
+        try:
+            base_dir = os.path.dirname(__file__)
+            candidates = [
+                os.path.join(base_dir, "airplane.png"),
+                os.path.join(base_dir, "..", "resources", "airplane.png"),
+            ]
+            img_path = None
+            for cand in candidates:
+                if os.path.exists(cand):
+                    img_path = cand
+                    break
+            if img_path is None:
+                return
+
+            img = Image.open(img_path)
+            target_height = 150
+            w, h = img.size
+            ratio = target_height / h
+            new_w = int(w * ratio)
+            img = img.resize((new_w, target_height), Image.Resampling.LANCZOS)
+            self.airplane_img = img
+            self.airplane_img_tk = ImageTk.PhotoImage(img)
+        except Exception as e:
+            print(f"Errore nel caricamento dell'immagine dell'aereo: {e}")
+            self.airplane_img_tk = None
+
+    def _draw_airplane(self, event=None):
+        """Disegna l'aereo sul canvas, facendolo spuntare dal bordo destro."""
+        if self.airplane_img_tk is None:
+            return
+        canvas = self.canvas
+        canvas.delete("airplane")
+        cw = canvas.winfo_width()
+        ch = canvas.winfo_height()
+        if cw <= 1 or ch <= 1:
+            return
+
+        img_w = self.airplane_img_tk.width()
+        img_h = self.airplane_img_tk.height()
+        visible = 80
+        x = cw - visible
+        y = (ch - img_h) // 2
+        canvas.create_image(x, y, image=self.airplane_img_tk,
+                            anchor='nw', tags="airplane")
+
 
     # ------------------------------------------------------------------------
     # Chiusura
