@@ -13,8 +13,8 @@ class ConfigWindow:
         self.app = app_ref
         self.window = tk.Toplevel(master)
         self.window.title("⚙️ Configurazione - ClearToCopy")
-        self.window.geometry("400x600")
-        self.window.minsize(500, 400)
+        self.window.geometry("420x600")
+        self.window.minsize(420, 600)
         self.window.configure(bg=BG)
         self.window.transient(master)
         self.window.grab_set()
@@ -35,7 +35,7 @@ class ConfigWindow:
         main_frame = tk.Frame(self.window, bg=BG)
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
-        tk.Label(main_frame, text="Modifica Configurazione", font=TITLE_FONT,
+        tk.Label(main_frame, text="MODIFICA CONFIGURAZIONE", font=TITLE_FONT,
                  fg=ACCENT_CYAN, bg=BG).pack(anchor="w", pady=(0, 15))
 
         # --- CONTENITORE PARAMETRI ---
