@@ -15,6 +15,7 @@ from .theme import *
 from .debug_window import DebugWindow
 from .config_window import ConfigWindow
 
+
 class TranscriberGUI:
 
     def __init__(self, root):
@@ -31,7 +32,7 @@ class TranscriberGUI:
         self.debug_window = None
         self.config_window = None
 
-        self._pipeline_components = {}      # Riferimenti ai componenti della pipeline (popolati da run_pipeline)
+        self._pipeline_components = {}
 
         self.transcript_buffer = []
         self.autosave_interval = 10
@@ -45,13 +46,38 @@ class TranscriberGUI:
     # ------------------------------------------------------------------------
     def _build_ui(self):
         self.root.title("ATC Radio Transcriber")
-        self.root.geometry("960x720")
+        self.root.geometry("1100x720")
         self.root.configure(bg=BG)
-        self.root.minsize(820, 500)
+        self.root.minsize(960, 500)
+
+        # === CONTENITORE PRINCIPALE (dashboard + sidebar) ===
+        self.main_container = tk.Frame(self.root, bg=BG)
+        self.main_container.pack(fill="both", expand=True, padx=20, pady=(12, 10))
+
+        # --- COLONNA DI SINISTRA: DASHBOARD ---
+        self.content_frame = tk.Frame(self.main_container, bg=BG)
+        self.content_frame.pack(side="left", fill="both", expand=True)
 
         # HEADER
-        header = tk.Frame(self.root, bg=BG, height=50)
-        header.pack(fill="x", padx=20, pady=(12, 6))
+        header = tk.Frame(self.content_frame, bg=BG, height=50)
+        header.pack(fill="x", pady=(0, 6))
+
+        # Pulsante per riaprire la sidebar (se chiusa)
+        self.menu_toggle_btn = tk.Button(
+            header,
+            text="☰ Menu",
+            command=self._toggle_sidebar,
+            bg="#2a2a2a",
+            fg=ACCENT_CYAN,
+            activebackground="#3d3d3d",
+            font=FONT_BOLD,
+            relief="flat",
+            padx=8,
+            pady=4,
+            cursor="hand2",
+            bd=0
+        )
+        self.menu_toggle_btn.pack(side="left", padx=(0, 12))
 
         tk.Label(header, text="🎙️ ATC RADIO TRANSCRIBER", font=TITLE_FONT,
                  fg=ACCENT_CYAN, bg=BG).pack(side="left")
@@ -65,9 +91,9 @@ class TranscriberGUI:
                                      fg=FG_DIM, bg=BG)
         self.status_label.pack(side="left")
 
-        # CONTROLS
-        controls = tk.Frame(self.root, bg=BG, height=50)
-        controls.pack(fill="x", padx=20, pady=(0, 10))
+        # CONTROLS (barra degli strumenti) – RIMOSSO il pulsante "Ricarca CFG"
+        controls = tk.Frame(self.content_frame, bg=BG, height=50)
+        controls.pack(fill="x", pady=(0, 10))
 
         self.start_btn = tk.Button(controls, text="▶  AVVIA", command=self._on_start,
                                    bg=ACCENT_CYAN, fg="#04140a", activebackground="#00b8e6",
@@ -81,30 +107,29 @@ class TranscriberGUI:
                                   cursor="hand2", bd=0, state="disabled")
         self.stop_btn.pack(side="left", padx=(10, 0))
 
-        self.debug_btn = tk.Button(controls, text="🐞 DEBUG OFF", command=self._toggle_debug,
-                                   bg="#2a2a2a", fg=FG_DIM, activebackground="#3d3d3d",
-                                   font=FONT_BOLD, relief="flat", padx=12, pady=8,
-                                   cursor="hand2", bd=0)
-        self.debug_btn.pack(side="left", padx=(10, 0))
-
-        self.config_btn = tk.Button(controls, text="⚙️ CONFIG", command=self._open_config_window,
-                                   bg="#2a2a2a", fg=ACCENT_GREEN, activebackground="#3d3d3d",
-                                   font=FONT_BOLD, relief="flat", padx=10, pady=8,
-                                   cursor="hand2", bd=0)
-        self.config_btn.pack(side="left", padx=(10, 0))
-
-        self.reload_btn = tk.Button(controls, text="🔄 RICARICA CFG", command=self._reload_config,
-                                   bg="#1a2a2a", fg=ACCENT_CYAN, activebackground="#1a3a3a",
-                                   font=FONT_BOLD, relief="flat", padx=10, pady=8,
-                                   cursor="hand2", bd=0)
-        self.reload_btn.pack(side="left", padx=(10, 0))
+        # Pulsante DEBUG TOGGLE (solo registrazione log)
+        self.debug_toggle_btn = tk.Button(
+            controls,
+            text="🐞 DEBUG OFF",
+            command=self._toggle_debug,
+            bg="#2a2a2a",
+            fg=FG_DIM,
+            activebackground="#3d3d3d",
+            font=FONT_BOLD,
+            relief="flat",
+            padx=12,
+            pady=8,
+            cursor="hand2",
+            bd=0
+        )
+        self.debug_toggle_btn.pack(side="left", padx=(10, 0))
 
         self.mode_label = tk.Label(controls, text="", font=FONT_SMALL, fg=FG_DIM, bg=BG)
         self.mode_label.pack(side="right")
 
-        # MAIN PANEL
-        main_panel = tk.Frame(self.root, bg=BG)
-        main_panel.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        # MAIN PANEL (contenuto centrale)
+        main_panel = tk.Frame(self.content_frame, bg=BG)
+        main_panel.pack(fill="both", expand=True)
 
         # COLONNA SINISTRA (70%)
         left_col = tk.Frame(main_panel, bg=BG)
@@ -144,6 +169,7 @@ class TranscriberGUI:
         # COLONNA DESTRA (30%)
         right_col = tk.Frame(main_panel, bg=BG, width=260)
         right_col.pack(side="right", fill="y", padx=(10, 0))
+        right_col.pack_propagate(False)
 
         # Configurazione rapida
         config_frame = self._card(right_col, "⚙️ CONFIGURAZIONE RAPIDA")
@@ -220,10 +246,88 @@ class TranscriberGUI:
             self.metric_labels[key] = val
 
         # BARRA DI ERRORE
-        self.error_label = tk.Label(self.root, text="✅ Sistema pronto",
+        self.error_label = tk.Label(self.content_frame, text="✅ Sistema pronto",
                                     font=FONT_SMALL, fg=ACCENT_GREEN,
                                     bg=BG, anchor="w", justify="left")
-        self.error_label.pack(fill="x", padx=20, pady=(0, 12))
+        self.error_label.pack(fill="x", pady=(10, 0))
+
+        # --- SIDEBAR ---
+        self.sidebar_frame = tk.Frame(self.main_container, bg=PANEL_BG, width=140)
+        self.sidebar_frame.pack(side="left", fill="y", padx=(10, 0))
+        self.sidebar_frame.pack_propagate(False)
+
+        # Intestazione sidebar con pulsante di chiusura
+        sidebar_header = tk.Frame(self.sidebar_frame, bg=PANEL_BG)
+        sidebar_header.pack(fill="x", pady=(10, 6), padx=8)
+
+        tk.Label(sidebar_header, text="MENU", font=FONT_BOLD,
+                 fg=ACCENT_CYAN, bg=PANEL_BG).pack(side="left")
+
+        # Pulsante ✕ per chiudere la sidebar
+        tk.Button(
+            sidebar_header,
+            text="✕",
+            command=self._toggle_sidebar,
+            bg=PANEL_BG,
+            fg=FG_DIM,
+            activebackground="#2a3a4a",
+            font=FONT_BOLD,
+            relief="flat",
+            padx=4,
+            pady=2,
+            cursor="hand2",
+            bd=0
+        ).pack(side="right")
+
+        # --- Pulsanti della sidebar ---
+
+        # 1. Debug (apre finestra log)
+        tk.Button(
+            self.sidebar_frame,
+            text="🐞 Debug",
+            command=self._open_debug_window,
+            bg=CARD_BG,
+            fg=FG,
+            activebackground="#2a3a4a",
+            font=FONT_BOLD,
+            relief="flat",
+            padx=10,
+            pady=8,
+            cursor="hand2",
+            bd=0
+        ).pack(fill="x", padx=10, pady=4)
+
+        # 2. Config
+        tk.Button(
+            self.sidebar_frame,
+            text="⚙️ Config",
+            command=self._open_config_window,
+            bg=CARD_BG,
+            fg=FG,
+            activebackground="#2a3a4a",
+            font=FONT_BOLD,
+            relief="flat",
+            padx=10,
+            pady=8,
+            cursor="hand2",
+            bd=0
+        ).pack(fill="x", padx=10, pady=4)
+
+        # 3. Ricarica CFG Live (spostato qui)
+        tk.Button(
+            self.sidebar_frame,
+            text="🔄 Ric CFG Live",
+            command=self._reload_config,
+            bg=CARD_BG,
+            fg=ACCENT_CYAN,
+            activebackground="#2a3a4a",
+            font=FONT_BOLD,
+            relief="flat",
+            padx=10,
+            pady=8,
+            cursor="hand2",
+            bd=0
+        ).pack(fill="x", padx=10, pady=4)
 
         self._uptime_start = time.time()
         self._update_uptime()
@@ -300,8 +404,27 @@ class TranscriberGUI:
         self.root.after(1000, self._update_uptime)
 
     # ------------------------------------------------------------------------
-    # Finestra di configurazione
+    # Toggle sidebar (chiudi / riapri)
     # ------------------------------------------------------------------------
+    def _toggle_sidebar(self):
+        """Nasconde o mostra la sidebar laterale."""
+        if self.sidebar_frame.winfo_ismapped():
+            self.sidebar_frame.pack_forget()
+            self.menu_toggle_btn.config(text="☰ Menu ◀")
+        else:
+            self.sidebar_frame.pack(side="right", fill="y", padx=(10, 0))
+            self.menu_toggle_btn.config(text="☰ Menu ▶")
+
+    # ------------------------------------------------------------------------
+    # Finestre laterali (Debug / Config)
+    # ------------------------------------------------------------------------
+    def _open_debug_window(self):
+        """Apre o porta in primo piano la finestra di debug (log viewer)."""
+        if self.debug_window is None or not self.debug_window.window.winfo_exists():
+            self.debug_window = DebugWindow(self.root)
+        else:
+            self.debug_window.window.lift()
+
     def _open_config_window(self):
         if self.config_window is None or not self.config_window.window.winfo_exists():
             self.config_window = ConfigWindow(self.root, self)
@@ -309,7 +432,64 @@ class TranscriberGUI:
             self.config_window.window.lift()
 
     # ------------------------------------------------------------------------
-    # Reload config a caldo
+    # Toggle debug (solo registrazione log)
+    # ------------------------------------------------------------------------
+    def _toggle_debug(self):
+        """Attiva/disattiva la registrazione dei log di debug (non gestisce la finestra)."""
+        self.debug_enabled = not self.debug_enabled
+        if self.debug_enabled:
+            self.debug_toggle_btn.config(text="🐞 DEBUG ON", bg=ACCENT_AMBER, fg="#14100a")
+            set_console_debug(True)
+            self.error_label.config(
+                text="🐞 Modalità DEBUG attiva. I log verranno salvati allo stop.",
+                fg=ACCENT_AMBER
+            )
+        else:
+            self.debug_toggle_btn.config(text="🐞 DEBUG OFF", bg="#2a2a2a", fg=FG_DIM)
+            set_console_debug(False)
+            self._prompt_save_debug_log()
+
+    def _prompt_save_debug_log(self):
+        """Chiede all'utente se salvare o cancellare il file di log di debug."""
+        log_file = "transcriber.log"
+        has_content = os.path.exists(log_file) and os.path.getsize(log_file) > 0
+        if not has_content:
+            self.error_label.config(
+                text="ℹ️ Nessun messaggio di debug da salvare.",
+                fg=FG_DIM
+            )
+            return
+
+        if messagebox.askyesno(
+            "Salva log di debug",
+            "Il file transcriber.log contiene messaggi di debug.\n"
+            "Vuoi salvarlo (con timestamp) o eliminarlo?"
+        ):
+            new_name = archive_log_file()
+            if new_name:
+                self.error_label.config(
+                    text=f"✅ Log di debug salvati in: {new_name}",
+                    fg=ACCENT_GREEN
+                )
+            else:
+                self.error_label.config(
+                    text="❌ Errore durante il salvataggio dei log.",
+                    fg=ACCENT_RED
+                )
+        else:
+            if clear_log_file():
+                self.error_label.config(
+                    text="ℹ️ Log di debug eliminati.",
+                    fg=ACCENT_AMBER
+                )
+            else:
+                self.error_label.config(
+                    text="⚠️ Impossibile eliminare il file di log.",
+                    fg=ACCENT_RED
+                )
+
+    # ------------------------------------------------------------------------
+    # Reload config a caldo (ora in sidebar)
     # ------------------------------------------------------------------------
     def _reload_config(self):
         """Ricarica config.json e applica le modifiche ai componenti attivi (VAD e filtro) senza riavviare."""
@@ -385,7 +565,6 @@ class TranscriberGUI:
                 )
         except Exception as e:
             self.error_label.config(text=f"⚠️ Errore nell'aggiornamento dei parametri Groq: {e}", fg=ACCENT_AMBER)
-
 
         self._update_gui_from_config(config)
 
@@ -493,7 +672,7 @@ class TranscriberGUI:
                 fg=FG_DIM
             )
 
-        # Gestione debug log
+        # Gestione debug log (se attivo)
         if self.debug_enabled:
             self._prompt_save_debug_log()
 
@@ -537,66 +716,6 @@ class TranscriberGUI:
             self.bus.emit("error", message=str(e))
         finally:
             self.bus.emit("stopped")
-
-    # ------------------------------------------------------------------------
-    # Debug toggle
-    # ------------------------------------------------------------------------
-    def _toggle_debug(self):
-        self.debug_enabled = not self.debug_enabled
-        if self.debug_enabled:
-            self.debug_btn.config(text="🐞 DEBUG ON", bg=ACCENT_AMBER, fg="#14100a")
-            set_console_debug(True)
-            self.debug_window = DebugWindow(self.root)
-            self.error_label.config(
-                text="🐞 Modalità DEBUG attiva. I log verranno gestiti allo stop.",
-                fg=ACCENT_AMBER
-            )
-        else:
-            self.debug_btn.config(text="🐞 DEBUG OFF", bg="#2a2a2a", fg=FG_DIM)
-            set_console_debug(False)
-            if self.debug_window:
-                self.debug_window.on_close()
-                self.debug_window = None
-            self._prompt_save_debug_log()
-
-    def _prompt_save_debug_log(self):
-        """Chiede all'utente se salvare o cancellare il file di log di debug."""
-        log_file = "transcriber.log"
-        has_content = os.path.exists(log_file) and os.path.getsize(log_file) > 0
-        if not has_content:
-            self.error_label.config(
-                text="ℹ️ Nessun messaggio di debug da salvare.",
-                fg=FG_DIM
-            )
-            return
-
-        if messagebox.askyesno(
-            "Salva log di debug",
-            "Il file transcriber.log contiene messaggi di debug.\n"
-            "Vuoi salvarlo (con timestamp) o eliminarlo?"
-        ):
-            new_name = archive_log_file()
-            if new_name:
-                self.error_label.config(
-                    text=f"✅ Log di debug salvati in: {new_name}",
-                    fg=ACCENT_GREEN
-                )
-            else:
-                self.error_label.config(
-                    text="❌ Errore durante il salvataggio dei log.",
-                    fg=ACCENT_RED
-                )
-        else:
-            if clear_log_file():
-                self.error_label.config(
-                    text="ℹ️ Log di debug eliminati.",
-                    fg=ACCENT_AMBER
-                )
-            else:
-                self.error_label.config(
-                    text="⚠️ Impossibile eliminare il file di log.",
-                    fg=ACCENT_RED
-                )
 
     # ------------------------------------------------------------------------
     # Polling eventi (bus → GUI)
