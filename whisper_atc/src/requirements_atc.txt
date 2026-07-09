@@ -1,0 +1,8 @@
+# Installa prima torch con supporto CUDA a parte (vedi README.md),
+# poi installa il resto con:
+#   pip install -r requirements.txt
+
+transformers>=4.40
+accelerate
+soundfile
+librosa
