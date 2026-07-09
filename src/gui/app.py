@@ -45,7 +45,7 @@ class TranscriberGUI:
     # UI – costruzione
     # ------------------------------------------------------------------------
     def _build_ui(self):
-        self.root.title("ATC Radio Transcriber")
+        self.root.title("ClearToCopy - ATC Radio Transcriber")
         self.root.geometry("1100x720")
         self.root.configure(bg=BG)
         self.root.minsize(960, 500)
@@ -79,9 +79,6 @@ class TranscriberGUI:
         )
         self.menu_toggle_btn.pack(side="left", padx=(0, 12))
 
-        tk.Label(header, text="🎙️ ATC RADIO TRANSCRIBER", font=TITLE_FONT,
-                 fg=ACCENT_CYAN, bg=BG).pack(side="left")
-
         status_frame = tk.Frame(header, bg=BG)
         status_frame.pack(side="right")
         self.status_dot = tk.Canvas(status_frame, width=14, height=14, bg=BG, highlightthickness=0)
@@ -96,7 +93,7 @@ class TranscriberGUI:
         controls.pack(fill="x", pady=(0, 10))
 
         self.start_btn = tk.Button(controls, text="▶  AVVIA", command=self._on_start,
-                                   bg=ACCENT_CYAN, fg="#04140a", activebackground="#00b8e6",
+                                   bg=ACCENT_GREEN, fg="#e2e6e2", activebackground="#089349",
                                    font=FONT_BOLD, relief="flat", padx=18, pady=8,
                                    cursor="hand2", bd=0)
         self.start_btn.pack(side="left")
@@ -172,7 +169,7 @@ class TranscriberGUI:
         right_col.pack_propagate(False)
 
         # Configurazione rapida
-        config_frame = self._card(right_col, "⚙️ CONFIGURAZIONE RAPIDA")
+        config_frame = self._card(right_col, "⚙️ DETTAGLI CONFIGURAZIONE")
         cfg_inner = tk.Frame(config_frame, bg=CARD_BG)
         cfg_inner.pack(fill="both", expand=True, padx=8, pady=8)
         params = [
@@ -410,10 +407,10 @@ class TranscriberGUI:
         """Nasconde o mostra la sidebar laterale."""
         if self.sidebar_frame.winfo_ismapped():
             self.sidebar_frame.pack_forget()
-            self.menu_toggle_btn.config(text="☰ Menu ◀")
+            self.menu_toggle_btn.config(text="☰ Menu")
         else:
             self.sidebar_frame.pack(side="right", fill="y", padx=(10, 0))
-            self.menu_toggle_btn.config(text="☰ Menu ▶")
+            self.menu_toggle_btn.config(text="☰ Menu")
 
     # ------------------------------------------------------------------------
     # Finestre laterali (Debug / Config)

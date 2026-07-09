@@ -12,8 +12,8 @@ class ConfigWindow:
         self.master = master
         self.app = app_ref
         self.window = tk.Toplevel(master)
-        self.window.title("⚙️ Configurazione - ATC Transcriber")
-        self.window.geometry("620x520")
+        self.window.title("⚙️ Configurazione - ClearToCopy")
+        self.window.geometry("400x600")
         self.window.minsize(500, 400)
         self.window.configure(bg=BG)
         self.window.transient(master)
@@ -38,29 +38,17 @@ class ConfigWindow:
         tk.Label(main_frame, text="Modifica Configurazione", font=TITLE_FONT,
                  fg=ACCENT_CYAN, bg=BG).pack(anchor="w", pady=(0, 15))
 
-        # Canvas con scroll
-        canvas = tk.Canvas(main_frame, bg=BG, highlightthickness=0)
-        scrollbar = tk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg=BG)
+        # --- CONTENITORE PARAMETRI ---
+        params_frame = tk.Frame(main_frame, bg=BG)
+        params_frame.pack(fill="both", expand=True)
 
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True, pady=(0, 15))
-        scrollbar.pack(side="right", fill="y", pady=(0, 15))
-
-        scrollable_frame.grid_columnconfigure(0, weight=0, minsize=200)
-        scrollable_frame.grid_columnconfigure(1, weight=1)
+        params_frame.grid_columnconfigure(0, weight=0, minsize=200)
+        params_frame.grid_columnconfigure(1, weight=1)
 
         row = 0
 
         # --- Sezione VAD ---
-        lbl_section = tk.Label(scrollable_frame, text="Voice Activity Detection (VAD)",
+        lbl_section = tk.Label(params_frame, text="Voice Activity Detection (VAD)",
                                font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
         lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
         row += 1
@@ -73,9 +61,9 @@ class ConfigWindow:
             ("activation_ratio", "Activation ratio (0-1)", self.config_data.get("vad", {}).get("activation_ratio", 0.4)),
         ]
         for key, label, default_value in vad_params:
-            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl = tk.Label(params_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
             lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
-            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+            entry = tk.Entry(params_frame, font=FONT, bg="#05070a", fg=FG,
                              insertbackground=FG, relief="flat", bd=0)
             entry.grid(row=row, column=1, sticky="ew", pady=2)
             entry.insert(0, str(default_value))
@@ -83,7 +71,7 @@ class ConfigWindow:
             row += 1
 
         # --- Sezione Filtro ---
-        lbl_section = tk.Label(scrollable_frame, text="Filtro Passa-Banda",
+        lbl_section = tk.Label(params_frame, text="Filtro Passa-Banda",
                                font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
         lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
         row += 1
@@ -94,9 +82,9 @@ class ConfigWindow:
             ("band_max", "Band max (Hz)", self.config_data.get("filter", {}).get("band_max", 3400)),
         ]
         for key, label, default_value in filter_params:
-            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl = tk.Label(params_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
             lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
-            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+            entry = tk.Entry(params_frame, font=FONT, bg="#05070a", fg=FG,
                              insertbackground=FG, relief="flat", bd=0)
             entry.grid(row=row, column=1, sticky="ew", pady=2)
             entry.insert(0, str(default_value))
@@ -104,7 +92,7 @@ class ConfigWindow:
             row += 1
 
         # --- Sezione API Groq ---
-        lbl_section = tk.Label(scrollable_frame, text="API Groq",
+        lbl_section = tk.Label(params_frame, text="API Groq",
                                font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
         lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
         row += 1
@@ -116,30 +104,34 @@ class ConfigWindow:
             ("use_flac", "Usa FLAC (true/false)", self.config_data.get("api", {}).get("groq", {}).get("use_flac", True)),
         ]
         for key, label, default_value in api_params:
-            lbl = tk.Label(scrollable_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl = tk.Label(params_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
             lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
-            entry = tk.Entry(scrollable_frame, font=FONT, bg="#05070a", fg=FG,
+            entry = tk.Entry(params_frame, font=FONT, bg="#05070a", fg=FG,
                              insertbackground=FG, relief="flat", bd=0)
             entry.grid(row=row, column=1, sticky="ew", pady=2)
             entry.insert(0, str(default_value))
             self.entries[key] = entry
             row += 1
 
-        # --- Pulsanti ---
-        btn_container = tk.Frame(main_frame, bg=BG)
-        btn_container.pack(fill="x", pady=(15, 5), padx=30)
+        # --- Pulsanti (applica e ok) in basso, più piccoli e vicini ---
+        # Aggiungo una riga di spaziatura
+        tk.Label(params_frame, text="", bg=BG).grid(row=row, column=0, columnspan=2, pady=(10, 0))
+        row += 1
 
-        btn_container.grid_columnconfigure(0, weight=1)
-        btn_container.grid_columnconfigure(1, weight=0)
-        btn_container.grid_columnconfigure(2, weight=1)
+        btn_frame = tk.Frame(params_frame, bg=BG)
+        btn_frame.grid(row=row, column=0, columnspan=2, pady=(5, 0))
 
-        tk.Button(btn_container, text="🔄 APPLICA", command=self._apply_config,
-                  bg=ACCENT_CYAN, fg="#04140a", font=FONT_BOLD, relief="flat",
-                  padx=20, pady=8, cursor="hand2").grid(row=0, column=1, pady=(0, 10))
+        # Pulsante APPLICA
+        apply_btn = tk.Button(btn_frame, text="🔄 APPLICA", command=self._apply_config,
+                              bg=ACCENT_CYAN, fg="#04140a", font=FONT_SMALL,
+                              relief="flat", padx=10, pady=4, cursor="hand2", bd=0)
+        apply_btn.pack(side="left", padx=(0, 8))
 
-        tk.Button(btn_container, text="✅ OK", command=self._save_and_close,
-                  bg=ACCENT_GREEN, fg="#04140a", font=FONT_BOLD, relief="flat",
-                  padx=20, pady=8, cursor="hand2").grid(row=1, column=1, pady=(0, 0))
+        # Pulsante OK
+        ok_btn = tk.Button(btn_frame, text="✅ OK", command=self._save_and_close,
+                           bg=ACCENT_GREEN, fg="#04140a", font=FONT_SMALL,
+                           relief="flat", padx=10, pady=4, cursor="hand2", bd=0)
+        ok_btn.pack(side="left")
 
     def _get_patch_from_entries(self):
         return {
