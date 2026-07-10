@@ -17,7 +17,9 @@ class VADProcessor:
         silence_timeout_s=1.2,         # quanto silenzio serve per chiudere un segmento
         max_utterance_s=20.0,          # durata massima di un segmento (taglio forzato)
         min_segment_duration_s=1.2,    # durata minima per considerare il segmento valido
-        activation_ratio=0.6           # % di frame vocali per attivare il segmento
+        activation_ratio=0.6,          # % di frame vocali per attivare il segmento
+        event_bus=None,                # se fornito, pubblica l'evento "rms" a ogni frame
+        rms_threshold=50.0             # soglia RMS mostrata/usata per l'indicatore "accettato/scartato"
     ):
         self._state_lock = threading.Lock()
         self.rate = rate
@@ -27,6 +29,8 @@ class VADProcessor:
         self.max_utterance_s = max_utterance_s
         self.min_segment_duration_s = min_segment_duration_s
         self.activation_ratio = activation_ratio
+        self.event_bus = event_bus
+        self.rms_threshold = rms_threshold
 
         self.triggered = False
 
@@ -90,6 +94,21 @@ class VADProcessor:
         with self._state_lock:
             is_speech = self.vad.is_speech(frame, self.rate)
             segment_completed = False
+
+            # Pubblica il livello del segnale (RMS) verso la GUI, indipendentemente
+            # dall'esito del rilevamento vocale. "accepted" riflette la decisione
+            # di webrtcvad (is_speech) e non solo il confronto con rms_threshold:
+            # è quel valore booleano che determina se il frame contribuisce a un
+            # segmento da trascrivere.
+            if self.event_bus:
+                samples = np.frombuffer(frame, dtype=np.int16)
+                if len(samples) > 0:
+                    rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+                else:
+                    rms = 0.0
+                self.event_bus.emit(
+                    "rms", value=rms, threshold=self.rms_threshold, accepted=is_speech
+                )
 
             if not self.triggered:
                 if len(self.ring_buffer) == self.ring_buffer_maxlen:
@@ -165,7 +184,8 @@ class VADProcessor:
         self.ring_buffer_silence.clear()
         self._unvoiced_count = 0
 
-    def update_params(self, aggressiveness, silence_timeout_s, max_utterance_s, min_segment_duration_s, activation_ratio):
+    def update_params(self, aggressiveness, silence_timeout_s, max_utterance_s,
+                       min_segment_duration_s, activation_ratio, rms_threshold=None):
         """Aggiorna i parametri VAD in modo thread-safe."""
         with self._state_lock:
             # Se c'è un segmento in corso, chiudilo prima di ricreare i buffer
@@ -178,5 +198,7 @@ class VADProcessor:
             self.max_utterance_s = max_utterance_s
             self.min_segment_duration_s = min_segment_duration_s
             self.activation_ratio = activation_ratio
+            if rms_threshold is not None:
+                self.rms_threshold = rms_threshold
             self.vad.set_mode(aggressiveness)
             self._update_buffers()

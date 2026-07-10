@@ -131,7 +131,7 @@ class TranscriberGUI:
                                      fg=FG_DIM, bg=BG)
         self.status_label.pack(side="left")
 
-        # CONTROLS (barra degli strumenti) – RIMOSSO il pulsante "Ricarca CFG"
+        # CONTROLS (barra degli strumenti) 
         controls = tk.Frame(self.content_frame, bg=BG, height=50)
         controls.pack(fill="x", pady=(0, 10))
 
