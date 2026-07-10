@@ -17,7 +17,7 @@ Documentazione per sviluppatori: architettura, struttura del codice, modello di 
 6. [EventBus e contratto degli eventi](#-eventbus-e-contratto-degli-eventi)
 7. [Schema di `config.json`](#-schema-di-configjson)
 8. [Reload a caldo della configurazione](#-reload-a-caldo-della-configurazione)
-9. [Note di manutenzione e problemi noti](#-note-di-manutenzione-e-problemi-noti)
+9. [Consideazioni](#considerazioni)
 10. [Estendere il progetto](#-estendere-il-progetto)
 
 ---
@@ -334,7 +334,7 @@ Il reload richiede che la pipeline sia già attiva (`self.running`); se i compon
 
 ---
 
-## 🩺 Note di manutenzione e problemi noti
+## Considerazioni
 
 Elenco onesto di aree da rivedere, per chi riprende in mano il codice:
 
