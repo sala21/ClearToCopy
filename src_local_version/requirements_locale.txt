@@ -1,0 +1,29 @@
+# NOTA IMPORTANTE: torch va installato A PARTE, PRIMA di questo file,
+# con la build CUDA corretta per la tua scheda (RTX 5050 = Blackwell,
+# serve CUDA 12.8+ e PyTorch 2.7.0+). Esempio:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# Se lo metti anche qui in requirements.txt, pip potrebbe installare una
+# build CPU-only e sovrascrivere quella CUDA già installata.
+
+altgraph==0.17.5
+certifi==2026.6.17
+charset-normalizer==3.4.7
+colorama==0.4.6
+idna==3.18
+numpy==2.5.0
+packaging==26.2
+pefile==2024.8.26
+PyAudio==0.2.14
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+pywin32-ctypes==0.2.3
+PyYAML==6.0.3
+scipy==1.18.0
+setuptools==81.0.0
+tqdm==4.68.3
+urllib3==2.7.0
+webrtcvad==2.0.10
+
+# --- Nuove dipendenze per il modello Whisper locale (sostituiscono 'requests') ---
+transformers>=4.40
+accelerate
