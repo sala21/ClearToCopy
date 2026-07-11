@@ -37,8 +37,8 @@
         "bypass_vad": false,
         "overlap_s": 0.3,
         "silence_gate_enabled": true,
-        "silence_rms_threshold": 50,
+        "silence_rms_threshold": 50.0,
         "boundary_search_s": 0.4,
-        "boundary_analysis_ms": 20
+        "boundary_analysis_ms": 20.0
     }
 }

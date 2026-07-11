@@ -13,9 +13,11 @@ except ImportError:
     HAS_PIL = False
 
 from config import load_config
-from paths import BASE_DIR, LOG_FILE
+from paths import BASE_DIR
 from events import EventBus
 from logger import archive_log_file, clear_log_file, set_console_debug
+from vad import VADProcessor
+from radio_segmenter import RadioSegmenter
 
 from .theme import *
 from .debug_window import DebugWindow
@@ -77,10 +79,9 @@ class TranscriberGUI:
         """Aggiorna l'interfaccia quando il modello è pronto."""
         self._update_status_item("🧠 Modello Locale", True, "CARICATO")
         self.start_btn.config(state="normal")
-        # Aggiorna i label della configurazione rapida
-        local_cfg = load_config().get("local_model", {})
-        self.quick_config_labels["Modello"].config(text=local_cfg.get("model_name", "?"))
-        self.quick_config_labels["Device"].config(text=local_cfg.get("device", "cuda"))
+        # Aggiorna i label della configurazione rapida e la modalità (VAD/Radio)
+        config = load_config()
+        self._update_gui_from_config(config)
         self.error_label.config(text="✅ Modello caricato. Premi 'Avvia' per iniziare.", fg=ACCENT_GREEN)
     
     
@@ -131,7 +132,7 @@ class TranscriberGUI:
                                      fg=FG_DIM, bg=BG)
         self.status_label.pack(side="left")
 
-        # CONTROLS (barra degli strumenti) 
+        # CONTROLS (barra degli strumenti) – RIMOSSO il pulsante "Ricarca CFG"
         controls = tk.Frame(self.content_frame, bg=BG, height=50)
         controls.pack(fill="x", pady=(0, 10))
 
@@ -510,7 +511,7 @@ class TranscriberGUI:
 
     def _prompt_save_debug_log(self):
         """Chiede all'utente se salvare o cancellare il file di log di debug."""
-        log_file = LOG_FILE
+        log_file = "transcriber.log"
         has_content = os.path.exists(log_file) and os.path.getsize(log_file) > 0
         if not has_content:
             self.error_label.config(
@@ -521,7 +522,7 @@ class TranscriberGUI:
 
         if messagebox.askyesno(
             "Salva log di debug",
-            f"Il file {LOG_FILE} contiene messaggi di debug.\n"
+            "Il file transcriber.log contiene messaggi di debug.\n"
             "Vuoi salvarlo (con timestamp) o eliminarlo?"
         ):
             new_name = archive_log_file()
@@ -559,10 +560,10 @@ class TranscriberGUI:
             )
             return
 
-        vad = self._pipeline_components.get("vad")
+        segmenter = self._pipeline_components.get("vad")  # VADProcessor o RadioSegmenter, a seconda della modalità attiva
         transcriber = self._pipeline_components.get("transcriber")
 
-        if vad is None or transcriber is None:
+        if segmenter is None or transcriber is None:
             self.error_label.config(
                 text="⏳ Pipeline non ancora pronta, riprova tra un istante.",
                 fg=ACCENT_AMBER
@@ -578,22 +579,53 @@ class TranscriberGUI:
             self.error_label.config(text=f"❌ Errore nel caricamento di config.json: {e}", fg=ACCENT_RED)
             return
 
-        # Aggiorna il VAD
-        vad_cfg = config.get("vad", {})
-        try:
-            vad.update_params(
-                aggressiveness=vad_cfg.get("aggressiveness", 1),
-                silence_timeout_s=vad_cfg.get("silence_timeout_s", 1.0),
-                max_utterance_s=vad_cfg.get("max_utterance_s", 15.0),
-                min_segment_duration_s=vad_cfg.get("min_segment_duration_s", 0.6),
-                activation_ratio=vad_cfg.get("activation_ratio", 0.4),
+        # Aggiorna il segmentatore (VAD classico o Radio a finestra fissa).
+        # Cambiare modalità a pipeline già avviata non è supportato: il
+        # segmentatore viene creato una volta sola da main.run_pipeline()
+        # a ogni Avvia, quindi uno switch di modalità richiede Stop+Avvia.
+        radio_cfg = config.get("radio", {})
+        requested_radio_mode = radio_cfg.get("enabled", False) and radio_cfg.get("bypass_vad", False)
+        current_is_radio = isinstance(segmenter, RadioSegmenter)
+
+        if requested_radio_mode != current_is_radio:
+            self.error_label.config(
+                text="⚠️ Hai cambiato modalità di acquisizione (VAD ↔ Radio): "
+                     "premi Stop e poi Avvia per applicarla, 'Ric CFG Live' non basta.",
+                fg=ACCENT_AMBER
             )
-            logging.getLogger("AudioTranscriber").info(
-                "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f",
-                vad.aggressiveness, vad.activation_ratio
-            )
-        except Exception as e:
-            self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
+        elif current_is_radio:
+            try:
+                segmenter.update_params(
+                    segment_duration_s=radio_cfg.get("segment_duration_s", 3.0),
+                    overlap_s=radio_cfg.get("overlap_s", 0.3),
+                    silence_gate_enabled=radio_cfg.get("silence_gate_enabled", True),
+                    silence_rms_threshold=radio_cfg.get("silence_rms_threshold", 50),
+                    boundary_search_s=radio_cfg.get("boundary_search_s", 0.4),
+                    boundary_analysis_ms=radio_cfg.get("boundary_analysis_ms", 20),
+                )
+                logging.getLogger("AudioTranscriber").info(
+                    "Parametri Radio aggiornati: segment_duration_s=%.2f, soglia_rms=%.1f",
+                    segmenter.segment_duration_s, segmenter.silence_rms_threshold
+                )
+            except Exception as e:
+                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento della modalità Radio: {e}", fg=ACCENT_AMBER)
+        else:
+            vad_cfg = config.get("vad", {})
+            try:
+                segmenter.update_params(
+                    aggressiveness=vad_cfg.get("aggressiveness", 1),
+                    silence_timeout_s=vad_cfg.get("silence_timeout_s", 1.0),
+                    max_utterance_s=vad_cfg.get("max_utterance_s", 15.0),
+                    min_segment_duration_s=vad_cfg.get("min_segment_duration_s", 0.6),
+                    activation_ratio=vad_cfg.get("activation_ratio", 0.4),
+                    rms_threshold=radio_cfg.get("silence_rms_threshold", 50.0),
+                )
+                logging.getLogger("AudioTranscriber").info(
+                    "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f, soglia_rms=%.1f",
+                    segmenter.aggressiveness, segmenter.activation_ratio, segmenter.rms_threshold
+                )
+            except Exception as e:
+                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
         
         # Aggiorna il Transcriber (filtro)
         try:
@@ -637,15 +669,14 @@ class TranscriberGUI:
         filter_text = "300-3400 Hz (ON)" if filter_active else "DISABILITATO"
         self._update_status_item("🔵 Filtro", filter_active, filter_text)
 
-        self.error_label.config(text="✅ Configurazione ricaricata e applicata (VAD e filtro aggiornati).", fg=ACCENT_GREEN)
+        self.error_label.config(text="✅ Configurazione ricaricata e applicata.", fg=ACCENT_GREEN)
         logging.getLogger("AudioTranscriber").info("Configurazione ricaricata e applicata.")
 
     def _update_gui_from_config(self, config):
         local_cfg = config.get("local_model", {})
-        radio_requested = config.get("radio", {}).get("bypass_vad", False)
-        mode = "VAD classico"
-        if radio_requested:
-            mode = "VAD classico (⚠️ radio.bypass_vad=true ma non ancora implementato)"
+        radio_cfg = config.get("radio", {})
+        use_radio_mode = radio_cfg.get("enabled", False) and radio_cfg.get("bypass_vad", False)
+        mode = "Radio (finestra fissa)" if use_radio_mode else "VAD classico"
         self.mode_label.config(
             text=f"Modello: {local_cfg.get('model_name', '?')}   •   Modalità: {mode}"
         )
@@ -813,7 +844,7 @@ class TranscriberGUI:
                     self.metric_labels["avg_time"].config(text=f"{data['avg_time']:.2f}s")
             elif kind == "error":
                 self.error_label.config(text=f"❌ Errore: {data.get('message', '')}", fg=ACCENT_RED)
-                self._update_status_item("🧠 Modello Locale", False, "ERRORE")
+                self._update_status_item("🌐 Groq API", False, "ERRORE")
             elif kind == "stopped":
                 self.running = False
                 self.start_btn.config(state="normal")
@@ -824,6 +855,9 @@ class TranscriberGUI:
                 self.error_label.config(text="⏹️ Trascrizione terminata.", fg=FG_DIM)
             elif kind == "model_loaded": 
                 # Modello caricato correttamente
+                self._update_status_item("🧠 Modello Locale", True, "CARICATO")
+                self.error_label.config(text="🎤 Ascolto attivo...", fg=ACCENT_GREEN)
+            elif kind == "status" and data.get("model_loaded"):   # alternativa
                 self._update_status_item("🧠 Modello Locale", True, "CARICATO")
                 self.error_label.config(text="🎤 Ascolto attivo...", fg=ACCENT_GREEN)
             elif kind == "audio_started":

@@ -13,8 +13,8 @@ class ConfigWindow:
         self.app = app_ref
         self.window = tk.Toplevel(master)
         self.window.title("⚙️ Configurazione - ClearToCopy")
-        self.window.geometry("520x650")
-        self.window.minsize(520, 650)
+        self.window.geometry("520x600")
+        self.window.minsize(420, 350)
         self.window.configure(bg=BG)
         self.window.transient(master)
         self.window.grab_set()
@@ -40,9 +40,43 @@ class ConfigWindow:
         tk.Label(main_frame, text="MODIFICA CONFIGURAZIONE", font=TITLE_FONT,
                  fg=ACCENT_CYAN, bg=BG).pack(anchor="w", pady=(0, 15))
 
-        # --- CONTENITORE PARAMETRI ---
-        params_frame = tk.Frame(main_frame, bg=BG)
-        params_frame.pack(fill="both", expand=True)
+        # --- CONTENITORE SCROLLABILE PER I PARAMETRI ---
+        canvas_area = tk.Frame(main_frame, bg=BG)
+        canvas_area.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(canvas_area, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(canvas_area, orient="vertical", command=canvas.yview)
+        params_frame = tk.Frame(canvas, bg=BG)
+
+        params_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas_window = canvas.create_window((0, 0), window=params_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # params_frame deve restare largo quanto il canvas, altrimenti le
+        # colonne (in particolare gli Entry a colonna 1) non si espandono.
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Scroll con la rotellina, attivo SOLO mentre il puntatore è sopra
+        # il canvas: bind_all permanente resterebbe agganciato a tutta
+        # l'app anche dopo la chiusura di questa finestra.
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
+        self._config_canvas = canvas  # per lo scollegamento di sicurezza in on_close
 
         params_frame.grid_columnconfigure(0, weight=0, minsize=200)
         params_frame.grid_columnconfigure(1, weight=1)
@@ -121,7 +155,14 @@ class ConfigWindow:
         row += 1
 
         radio_params = [
-            ("bypass_vad", "Bypass VAD (true/false)", self.config_data.get("radio", {}).get("bypass_vad", False)),
+            ("radio_enabled", "Modalità radio abilitata (true/false)", self.config_data.get("radio", {}).get("enabled", True)),
+            ("bypass_vad", "Usa modalità radio invece del VAD (true/false)", self.config_data.get("radio", {}).get("bypass_vad", False)),
+            ("segment_duration_s", "Durata segmento (s)", self.config_data.get("radio", {}).get("segment_duration_s", 3.0)),
+            ("overlap_s", "Overlap tra segmenti (s)", self.config_data.get("radio", {}).get("overlap_s", 0.3)),
+            ("silence_gate_enabled", "Scarta segmenti silenziosi (true/false)", self.config_data.get("radio", {}).get("silence_gate_enabled", True)),
+            ("silence_rms_threshold", "Soglia RMS silenzio", self.config_data.get("radio", {}).get("silence_rms_threshold", 50)),
+            ("boundary_search_s", "Ricerca punto di taglio (s)", self.config_data.get("radio", {}).get("boundary_search_s", 0.4)),
+            ("boundary_analysis_ms", "Risoluzione ricerca taglio (ms)", self.config_data.get("radio", {}).get("boundary_analysis_ms", 20)),
         ]
         for key, label, default_value in radio_params:
             lbl = tk.Label(params_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
@@ -133,12 +174,18 @@ class ConfigWindow:
             self.entries[key] = entry
             row += 1
 
-        # --- Pulsanti (applica e ok) in basso ---
-        tk.Label(params_frame, text="", bg=BG).grid(row=row, column=0, columnspan=2, pady=(10, 0))
+        note = tk.Label(
+            params_frame,
+            text="⚠️ Cambiare modalità (VAD ↔ Radio) richiede Stop poi Avvia,\n"
+                 "non basta 'Ric CFG Live' a pipeline già in corso.",
+            font=FONT_SMALL, fg=ACCENT_AMBER, bg=BG, justify="left", anchor="w"
+        )
+        note.grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
         row += 1
 
-        btn_frame = tk.Frame(params_frame, bg=BG)
-        btn_frame.grid(row=row, column=0, columnspan=2, pady=(5, 0))
+        # --- Pulsanti (applica e ok), fissi in basso, FUORI dall'area scrollabile ---
+        btn_frame = tk.Frame(main_frame, bg=BG)
+        btn_frame.pack(fill="x", pady=(10, 0))
 
         apply_btn = tk.Button(btn_frame, text="🔄 APPLICA", command=self._apply_config,
                               bg=ACCENT_CYAN, fg="#04140a", font=FONT_SMALL,
@@ -170,7 +217,14 @@ class ConfigWindow:
                 "language": self.entries["language"].get(),
             },
             "radio": {
+                "enabled": self.entries["radio_enabled"].get().lower() == "true",
                 "bypass_vad": self.entries["bypass_vad"].get().lower() == "true",
+                "segment_duration_s": float(self.entries["segment_duration_s"].get()),
+                "overlap_s": float(self.entries["overlap_s"].get()),
+                "silence_gate_enabled": self.entries["silence_gate_enabled"].get().lower() == "true",
+                "silence_rms_threshold": float(self.entries["silence_rms_threshold"].get()),
+                "boundary_search_s": float(self.entries["boundary_search_s"].get()),
+                "boundary_analysis_ms": float(self.entries["boundary_analysis_ms"].get()),
             }
         }
 
@@ -240,8 +294,22 @@ class ConfigWindow:
         self.entries["language"].insert(0, config.get("local_model", {}).get("language", "it"))
 
         # Radio
+        self.entries["radio_enabled"].delete(0, tk.END)
+        self.entries["radio_enabled"].insert(0, str(config.get("radio", {}).get("enabled", True)))
         self.entries["bypass_vad"].delete(0, tk.END)
         self.entries["bypass_vad"].insert(0, str(config.get("radio", {}).get("bypass_vad", False)))
+        self.entries["segment_duration_s"].delete(0, tk.END)
+        self.entries["segment_duration_s"].insert(0, str(config.get("radio", {}).get("segment_duration_s", 3.0)))
+        self.entries["overlap_s"].delete(0, tk.END)
+        self.entries["overlap_s"].insert(0, str(config.get("radio", {}).get("overlap_s", 0.3)))
+        self.entries["silence_gate_enabled"].delete(0, tk.END)
+        self.entries["silence_gate_enabled"].insert(0, str(config.get("radio", {}).get("silence_gate_enabled", True)))
+        self.entries["silence_rms_threshold"].delete(0, tk.END)
+        self.entries["silence_rms_threshold"].insert(0, str(config.get("radio", {}).get("silence_rms_threshold", 50)))
+        self.entries["boundary_search_s"].delete(0, tk.END)
+        self.entries["boundary_search_s"].insert(0, str(config.get("radio", {}).get("boundary_search_s", 0.4)))
+        self.entries["boundary_analysis_ms"].delete(0, tk.END)
+        self.entries["boundary_analysis_ms"].insert(0, str(config.get("radio", {}).get("boundary_analysis_ms", 20)))
 
     def _apply_config(self):
         try:
@@ -254,18 +322,26 @@ class ConfigWindow:
         except Exception as e:
             self.app.error_label.config(text=f"❌ Errore durante l'applicazione: {e}", fg=ACCENT_RED)
 
+    def _close_window(self):
+        if hasattr(self, "_config_canvas"):
+            try:
+                self._config_canvas.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+        self.window.destroy()
+
     def _save_and_close(self):
         try:
             if self.apply_pressed:
                 patch = self._get_patch_from_entries()
                 updated_config = self._save_config_with_patch(patch)
                 self.app._reload_config()
-                self.window.destroy()
+                self._close_window()
                 self.app.error_label.config(text="✅ Configurazione salvata e applicata.", fg=ACCENT_GREEN)
             else:
-                self.window.destroy()
+                self._close_window()
         except Exception as e:
             self.app.error_label.config(text=f"❌ Errore durante il salvataggio: {e}", fg=ACCENT_RED)
 
     def on_close(self):
-        self.window.destroy()
+        self._close_window()
