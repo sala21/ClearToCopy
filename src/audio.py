@@ -1,9 +1,10 @@
 import queue
+import numpy as np
 import pyaudio
 
 class AudioCapture:
-    
-    def __init__(self, rate=16000, channels=1, chunk=480, max_queue_size=200):
+
+    def __init__(self, rate=16000, channels=1, chunk=480, max_queue_size=200, input_gain=1.0):
         self.rate = rate
         self.channels = channels
         self.chunk = chunk
@@ -12,9 +13,24 @@ class AudioCapture:
         self.stream = None
         self.is_running = False
         self.dropped_frames = 0
+        # Moltiplicatore applicato ai campioni catturati, PRIMA che finiscano
+        # in coda (quindi prima di VAD/Radio e prima della trascrizione).
+        # Utile per segnali deboli (es. audio radio con livello basso) senza
+        # dover dipendere dalle impostazioni del mixer di sistema. Letto e
+        # scritto da thread diversi (thread audio di PyAudio in scrittura
+        # nel callback, thread GUI in aggiornamento a caldo): è un singolo
+        # float, la scrittura è atomica in CPython, non serve un lock per
+        # un caso d'uso "ultimo valore vince".
+        self.input_gain = input_gain
 
     def _callback(self, in_data, frame_count, time_info, status):
         """Callback per PyAudio."""
+        if self.input_gain != 1.0:
+            samples = np.frombuffer(in_data, dtype=np.int16).astype(np.float32)
+            samples *= self.input_gain
+            np.clip(samples, -32768, 32767, out=samples)
+            in_data = samples.astype(np.int16).tobytes()
+
         if self.audio_queue.qsize() < self.audio_queue.maxsize:
             self.audio_queue.put(in_data)
         else:

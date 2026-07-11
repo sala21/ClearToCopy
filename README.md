@@ -170,7 +170,6 @@ Documentazione completa di ogni campo nel [Manuale Tecnico](docs/technical_manua
 
 ## Limitazioni note
 
-- **Modalità "radio" non implementata**: i parametri sono presenti in `config.json` e nella finestra di configurazione, ma non collegati alla pipeline di trascrizione.
 - **Hot-reload parziale**: VAD, filtro e alcuni parametri di generazione si aggiornano a caldo; cambiare modello o device richiede la chiusura e riapertura dell'applicazione.
 - **Inferenza seriale**: un segmento alla volta, per compatibilità con GPU a VRAM limitata.
 

@@ -19,7 +19,9 @@ class VADProcessor:
         min_segment_duration_s=1.2,    # durata minima per considerare il segmento valido
         activation_ratio=0.6,          # % di frame vocali per attivare il segmento
         event_bus=None,                # se fornito, pubblica l'evento "rms" a ogni frame
-        rms_threshold=50.0             # soglia RMS mostrata/usata per l'indicatore "accettato/scartato"
+        rms_threshold=50.0,            # soglia RMS mostrata/usata per l'indicatore "accettato/scartato"
+        rms_gate_enabled=False         # se True, un frame sotto rms_threshold non è mai considerato parlato,
+                                        # anche se webrtcvad lo classifica come tale (filtro anti rumore/statica)
     ):
         self._state_lock = threading.Lock()
         self.rate = rate
@@ -31,6 +33,7 @@ class VADProcessor:
         self.activation_ratio = activation_ratio
         self.event_bus = event_bus
         self.rms_threshold = rms_threshold
+        self.rms_gate_enabled = rms_gate_enabled
 
         self.triggered = False
 

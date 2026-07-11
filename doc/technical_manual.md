@@ -347,10 +347,6 @@ Elenco onesto di aree da rivedere, per chi riprende in mano il codice:
    ```
    Il `return` qui esce da `__init__` **prima** di impostare `self.device` e prima di creare code/thread/eseguire il caricamento del modello. L'oggetto `Transcriber` risultante è in uno stato parzialmente inizializzato e inutilizzabile (mancano attributi come `self.device`, `self.model`, `self.transcribe_queue`). Qualunque chiamata successiva (es. `enqueue()`) solleverà `AttributeError`. Da correggere: o si ripristina il fallback automatico a CPU (`self.device = "cpu"` con logging esplicito) oppure si solleva un'eccezione esplicita (`raise RuntimeError(...)`) invece di un `return` silenzioso, così che il chiamante (`_load_model_async` in `app.py`, che già intercetta `Exception`) possa gestirlo correttamente invece di ritrovarsi un oggetto rotto ma apparentemente creato.
 
-2. **Evento `"rms"` mai emesso**: `_poll_events` gestisce un evento `"rms"` con payload `value`/`threshold`/`accepted`, ma nessuno dei moduli di questa revisione (`audio.py`, `vad.py`) lo pubblica. Il misuratore di livello segnale nella dashboard non si aggiornerà mai finché questa emissione non viene aggiunta (candidato naturale: dentro `VADProcessor.process_frame`, calcolando l'RMS del frame corrente e confrontandolo con una soglia).
-
-3. **Modalità CLI (`python main.py`) non rilascia esplicitamente il modello**: il blocco `finally` in `run_pipeline` chiama solo `audio.stop()`. In modalità CLI, dove `transcriber` viene creato da zero da `run_pipeline` stesso, questo significa che `transcriber.stop()` non viene mai chiamato esplicitamente all'uscita — non è un problema pratico (il processo termina e il sistema operativo libera la VRAM), ma è un'asimmetria rispetto al percorso GUI (dove `on_close()` lo chiama esplicitamente) da tenere a mente se in futuro si aggiungono risorse che richiedono un cleanup più esplicito (es. file aperti, connessioni).
-
 ---
 
 ## Estendere il progetto
@@ -362,5 +358,3 @@ Elenco onesto di aree da rivedere, per chi riprende in mano il codice:
 4. Se serve applicarlo a caldo, aggiungi la chiamata corrispondente in `TranscriberGUI._reload_config`.
 
 **Cambiare modello Whisper di base:** basta modificare `local_model.model_name` in `config.json` (o dalla finestra di configurazione) e riavviare l'applicazione — nessuna modifica al codice richiesta, a patto che il nuovo checkpoint sia compatibile con l'API `WhisperForConditionalGeneration`/`WhisperProcessor` di  Transformers.
-
-**Implementare la modalità "radio" (segmentazione a finestra fissa):** richiede un nuovo modulo (es. `radio_segmenter.py`) con un'interfaccia simile a `VADProcessor` (in particolare `set_callback()`), e una modifica in `main.run_pipeline` per scegliere tra `VADProcessor` e il nuovo segmentatore in base a `config["radio"]["enabled"]` e `config["radio"]["bypass_vad"]`. I parametri già presenti nello schema (`segment_duration_s`, `overlap_s`, `silence_gate_enabled`, `silence_rms_threshold`, `boundary_search_s`, `boundary_analysis_ms`) sono pensati esattamente per questo scopo, restano solo da collegare.

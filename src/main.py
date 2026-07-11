@@ -25,7 +25,9 @@ def run_pipeline(config, event_bus=None, stop_event=None, components_ref=None, t
     min_segment_duration_s = vad_cfg.get("min_segment_duration_s", 0.6)
     activation_ratio = vad_cfg.get("activation_ratio", 0.4)
 
-    audio = AudioCapture(rate=rate, channels=channels, chunk=chunk)
+    audio_cfg = config.get("audio", {})
+    audio = AudioCapture(rate=rate, channels=channels, chunk=chunk,
+                          input_gain=audio_cfg.get("input_gain", 1.0))
 
     # Tiene traccia di chi possiede il ciclo di vita del Transcriber: se è stato
     # creato qui dentro (caso CLI, transcriber=None in ingresso), questa funzione
@@ -79,7 +81,8 @@ def run_pipeline(config, event_bus=None, stop_event=None, components_ref=None, t
             min_segment_duration_s=min_segment_duration_s,
             activation_ratio=activation_ratio,
             event_bus=event_bus,
-            rms_threshold=radio_cfg.get("silence_rms_threshold", 50.0)
+            rms_threshold=radio_cfg.get("silence_rms_threshold", 50.0),
+            rms_gate_enabled=vad_cfg.get("rms_gate_enabled", False)
         )
         logger.info("Modalità di segmentazione: VAD classico.")
 
