@@ -20,27 +20,54 @@ except Exception:
 
 
 def archive_log_file():
-    """Rinomina il file di log con timestamp e restituisce il nuovo nome."""
-    if not os.path.exists(LOG_FILE):
+    """
+    Rinomina il file di log corrente con un timestamp e ne riapre uno nuovo
+    con lo stesso nome, per continuare a scrivere.
+
+    IMPORTANTE: passa dalla STESSA istanza di 'file_handler' (chiudi ->
+    rinomina -> riapri, lo stesso pattern usato internamente da
+    logging.handlers.RotatingFileHandler.doRollover()) invece di rinominare
+    il file con un handle indipendente. Su Windows, rinominare/troncare un
+    file che 'file_handler' ha ancora aperto può fallire silenziosamente o
+    disallineare lo stream del logger, impedendo ulteriori scritture per il
+    resto della sessione (il sintomo tipico: il file di log resta vuoto e
+    la GUI non chiede più di salvarlo).
+    """
+    if file_handler is None or not os.path.exists(LOG_FILE):
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     new_name = f"debug_{timestamp}.log"
     try:
-        os.rename(LOG_FILE, new_name)
+        file_handler.acquire()
+        try:
+            file_handler.close()
+            os.rename(LOG_FILE, new_name)
+            file_handler.stream = file_handler._open()
+        finally:
+            file_handler.release()
         return new_name
     except Exception:
         return None
 
 def clear_log_file():
-    """Svuota il file di log (cancella il contenuto)."""
-    if os.path.exists(LOG_FILE):
+    """
+    Svuota il file di log corrente TRAMITE lo stream già aperto dal logger
+    (seek a inizio file + truncate), invece di aprirne uno indipendente:
+    vedi la nota in archive_log_file() sul perché è importante su Windows.
+    """
+    if file_handler is None:
+        return False
+    try:
+        file_handler.acquire()
         try:
-            with open(LOG_FILE, "w", encoding="utf-8") as f:
-                f.write("")
-            return True
-        except Exception:
-            return False
-    return False
+            file_handler.stream.seek(0)
+            file_handler.stream.truncate()
+            file_handler.stream.flush()
+        finally:
+            file_handler.release()
+        return True
+    except Exception:
+        return False
 
 
 # =============================================

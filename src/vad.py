@@ -98,17 +98,26 @@ class VADProcessor:
             is_speech = self.vad.is_speech(frame, self.rate)
             segment_completed = False
 
-            # Pubblica il livello del segnale (RMS) verso la GUI, indipendentemente
-            # dall'esito del rilevamento vocale. "accepted" riflette la decisione
-            # di webrtcvad (is_speech) e non solo il confronto con rms_threshold:
-            # è quel valore booleano che determina se il frame contribuisce a un
-            # segmento da trascrivere.
+            # Calcola sempre l'RMS del frame: serve sia per l'evento verso la
+            # GUI sia (se abilitato) per il gate anti-rumore qui sotto.
+            samples = np.frombuffer(frame, dtype=np.int16)
+            if len(samples) > 0:
+                rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+            else:
+                rms = 0.0
+
+            # Gate RMS opzionale: un frame sotto soglia non viene MAI considerato
+            # parlato, anche se webrtcvad lo classifica come tale. Serve a filtrare
+            # rumore/statica che webrtcvad può scambiare per voce su segnali radio
+            # degradati. Il gate può solo "declassare" a non-parlato, mai promuovere
+            # un frame che webrtcvad ha già scartato.
+            if self.rms_gate_enabled and rms < self.rms_threshold:
+                is_speech = False
+
+            # Pubblica il livello del segnale (RMS) verso la GUI. "accepted" riflette
+            # la decisione finale (dopo l'eventuale gate), cioè se questo frame
+            # contribuisce davvero a un segmento da trascrivere.
             if self.event_bus:
-                samples = np.frombuffer(frame, dtype=np.int16)
-                if len(samples) > 0:
-                    rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
-                else:
-                    rms = 0.0
                 self.event_bus.emit(
                     "rms", value=rms, threshold=self.rms_threshold, accepted=is_speech
                 )
@@ -188,7 +197,8 @@ class VADProcessor:
         self._unvoiced_count = 0
 
     def update_params(self, aggressiveness, silence_timeout_s, max_utterance_s,
-                       min_segment_duration_s, activation_ratio, rms_threshold=None):
+                       min_segment_duration_s, activation_ratio, rms_threshold=None,
+                       rms_gate_enabled=None):
         """Aggiorna i parametri VAD in modo thread-safe."""
         with self._state_lock:
             # Se c'è un segmento in corso, chiudilo prima di ricreare i buffer
@@ -203,5 +213,7 @@ class VADProcessor:
             self.activation_ratio = activation_ratio
             if rms_threshold is not None:
                 self.rms_threshold = rms_threshold
+            if rms_gate_enabled is not None:
+                self.rms_gate_enabled = rms_gate_enabled
             self.vad.set_mode(aggressiveness)
             self._update_buffers()

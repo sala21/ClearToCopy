@@ -117,38 +117,90 @@ Accessibile tramite il pulsante **☰ Menu** in alto a sinistra, contiene tre pu
 
 Apribile dal menu laterale (**⚙️ Config**), permette di modificare `config.json` senza editarlo manualmente a mano. È divisa in quattro sezioni:
 
-### Voice Activity Detection (VAD)
+# Configurazione dell'applicazione
+
+Di seguito la documentazione completa di tutti i parametri disponibili nel file `config.json`, comprese le aggiunte recenti.
+
+---
+
+## Voice Activity Detection (VAD)
 
 | Campo | Significato |
-|---|---|
-| Aggressiveness (0-3) | Quanto il rilevatore è selettivo nel distinguere parlato da rumore. Valori più alti = più selettivo, rischio di perdere parlato debole. |
-| Silence timeout (s) | Quanto silenzio continuo serve per considerare conclusa una trasmissione. |
-| Max utterance (s) | Durata massima di un singolo segmento, oltre la quale viene tagliato forzatamente. |
-| Min segment duration (s) | Durata minima sotto la quale un segmento viene scartato come probabile rumore. |
-| Activation ratio (0-1) | Quanto "convintamente" deve essere rilevato del parlato prima di iniziare a registrare un segmento. |
+|-------|-------------|
+| `aggressiveness` (0-3) | Quanto il rilevatore è selettivo nel distinguere parlato da rumore. Valori più alti = più selettivo, rischio di perdere parlato debole. |
+| `silence_timeout_s` | Quanto silenzio continuo serve per considerare conclusa una trasmissione. |
+| `max_utterance_s` | Durata massima di un singolo segmento, oltre la quale viene tagliato forzatamente. |
+| `min_segment_duration_s` | Durata minima sotto la quale un segmento viene scartato come probabile rumore. |
+| `activation_ratio` (0-1) | Quanto "convintamente" deve essere rilevato del parlato prima di iniziare a registrare un segmento. |
+| `rms_gate_enabled` | Se `true`, abilita un ulteriore filtro basato sull'energia RMS del segnale. Utile per escludere rumori a bassa energia ma persistenti, migliorando la selettività del VAD. |
 
-### Filtro Passa-Banda
+---
 
-| Campo | Significato |
-|---|---|
-| Abilitato | Attiva/disattiva il filtro. |
-| Band min / Band max (Hz) | Intervallo di frequenze lasciato passare — di default tarato sulla voce umana su radio VHF. |
-
-### Modello Locale
+## Filtro Passa‑Banda
 
 | Campo | Significato |
-|---|---|
-| Nome modello | Identificativo del modello Whisper da usare (repository Hugging Face). |
-| Device (cpu/cuda) | Dove eseguire l'inferenza. |
-| Lingua | Lingua forzata per la trascrizione. |
+|-------|-------------|
+| `enabled` | Attiva/disattiva il filtro. |
+| `band_min` / `band_max` (Hz) | Intervallo di frequenze lasciato passare — di default tarato sulla voce umana su radio VHF. |
 
-> ⚠️ Modificare **Nome modello** o **Device** richiede di fermare e riavviare l'intera applicazione (chiudere e riaprire la finestra) per avere effetto — non basta STOP/AVVIA, perché il modello viene caricato una sola volta all'apertura del programma.
+---
 
-### Impostazioni Radio
+## Modello Locale (Whisper)
 
 | Campo | Significato |
-|---|---|
-| Bypass VAD (true/false) | Riservato a una modalità di segmentazione alternativa al VAD, **non ancora disponibile** in questa versione. Se impostato su `true`, l'applicazione lo segnala nella barra "Modalità" ma continua comunque a usare il VAD classico. |
+|-------|-------------|
+| `model_name` | Identificativo del modello Whisper da usare (repository Hugging Face). |
+| `device` (`cpu`/`cuda`) | Dove eseguire l'inferenza. |
+| `language` | Lingua forzata per la trascrizione. |
+| `max_new_tokens` | Numero massimo di token generati per ogni segmento. Valori più alti consentono trascrizioni più lunghe ma aumentano il tempo di inferenza. |
+| `no_repeat_ngram_size` | Impedisce la ripetizione di sequenze di *n* grammi all'interno dell'output. Con `3` non vengono ripetute triplette consecutive, riducendo loop e allucinazioni. |
+| `repetition_penalty` | Penalizza la generazione di token già apparsi. Valori > 1.0 riducono le ripetizioni; il default (1.3) è un buon compromesso per il parlato radiofonico. |
+| `use_initial_prompt` | Se `true`, il modello utilizza un prompt iniziale per migliorare la coerenza contestuale. |
+| `reorder_timeout_s` | Tempo massimo (in secondi) di attesa per il riordino dei segmenti in meccanismi di rilevamento fine. Valori più alti possono migliorare la precisione in presenza di sovrapposizioni. |
+
+> ⚠️ **Importante:** Modificare `model_name` o `device` richiede di fermare e riavviare l'intera applicazione (chiudere e riaprire la finestra) — non basta STOP/AVVIA, perché il modello viene caricato una sola volta all'apertura del programma.
+
+---
+
+## Audio
+
+Parametri relativi alla cattura e al preprocessamento del segnale:
+
+| Campo | Significato |
+|-------|-------------|
+| `rate` | Frequenza di campionamento (Hz) a cui l'audio viene acquisito. Il valore 16000 è ottimale per Whisper. |
+| `channels` | Numero di canali audio (1 = mono). Il sistema si aspetta un flusso mono per ridurre il carico. |
+| `frame_duration_ms` | Durata (in millisecondi) di ogni frame elaborato dal VAD e dal filtro. 30 ms è il valore standard per il rilevamento vocale. |
+| `input_gain` | Guadagno applicato al segnale in ingresso (fattore moltiplicativo). Valori > 1.0 amplificano l'audio, utili per sorgenti deboli. |
+
+---
+
+## Debug
+
+Parametri per il logging e la diagnostica:
+
+| Campo | Significato |
+|-------|-------------|
+| `enabled` | Attiva/disattiva la modalità debug. Se `true`, vengono prodotti log dettagliati. |
+| `log_to_file` | Se `true`, i log vengono scritti su file (oltre che sulla console). |
+| `console_level` | Livello di severità minimo per i messaggi visualizzati sulla console (es. `"INFO"`, `"DEBUG"`, `"WARNING"`). |
+
+---
+
+## Impostazioni Radio
+
+| Campo | Significato |
+|-------|-------------|
+| `bypass_vad` | *(riservato)* Se `true`, tenta di usare una segmentazione a tempo fisso, ma **in questa versione il VAD rimane sempre attivo**; viene solo visualizzato un avviso nella barra "Modalità". |
+| `segment_duration_s` | Durata fissa (in secondi) di ogni segmento nella segmentazione temporale (non basata su VAD). Default 3.0 s. |
+| `overlap_s` | Sovrapposizione (in secondi) tra segmenti consecutivi, per evitare tagli netti in corrispondenza di parole. |
+| `silence_gate_enabled` | Se `true`, attiva un gate di silenzio basato sulla soglia RMS per interrompere la registrazione quando il livello scende sotto la soglia. |
+| `silence_rms_threshold` | Soglia RMS (valore lineare, 0–32767) per il gate di silenzio. Valori tipici: 50 per ambienti silenziosi, 100–200 per ambienti rumorosi. |
+| `boundary_search_s` | Ampiezza della finestra (in secondi) in cui cercare il punto di taglio ottimale intorno a un confine di segmento, per evitare di troncare parole. |
+| `boundary_analysis_ms` | Risoluzione (in millisecondi) dell'analisi per la ricerca dei confini. Valori più piccoli danno tagli più precisi ma aumentano il carico computazionale. |
+
+---
+
 
 **Pulsanti:**
 - **🔄 APPLICA**: salva su `config.json` e applica subito le modifiche, senza chiudere la finestra.

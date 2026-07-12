@@ -83,6 +83,35 @@ class ConfigWindow:
 
         row = 0
 
+        # --- Sezione Cattura Audio ---
+        lbl_section = tk.Label(params_frame, text="Cattura Audio",
+                               font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
+        lbl_section.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+        row += 1
+
+        audio_params = [
+            ("input_gain", "Guadagno ingresso (x)", self.config_data.get("audio", {}).get("input_gain", 1.0)),
+        ]
+        for key, label, default_value in audio_params:
+            lbl = tk.Label(params_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
+            lbl.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=2)
+            entry = tk.Entry(params_frame, font=FONT, bg="#05070a", fg=FG,
+                             insertbackground=FG, relief="flat", bd=0)
+            entry.grid(row=row, column=1, sticky="ew", pady=2)
+            entry.insert(0, str(default_value))
+            self.entries[key] = entry
+            row += 1
+
+        note = tk.Label(
+            params_frame,
+            text="Moltiplicatore applicato al segnale catturato, prima di VAD/Radio\n"
+                 "e della trascrizione. 1.0 = invariato. Utile per sorgenti deboli\n"
+                 "(es. audio radio a basso livello). Si applica a caldo.",
+            font=FONT_SMALL, fg=FG_DIM, bg=BG, justify="left", anchor="w"
+        )
+        note.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        row += 1
+
         # --- Sezione VAD ---
         lbl_section = tk.Label(params_frame, text="Voice Activity Detection (VAD)",
                                font=FONT_BOLD, fg=ACCENT_CYAN, bg=BG)
@@ -95,6 +124,7 @@ class ConfigWindow:
             ("max_utterance_s", "Max utterance (s)", self.config_data.get("vad", {}).get("max_utterance_s", 15.0)),
             ("min_segment_duration_s", "Min segment duration (s)", self.config_data.get("vad", {}).get("min_segment_duration_s", 0.6)),
             ("activation_ratio", "Activation ratio (0-1)", self.config_data.get("vad", {}).get("activation_ratio", 0.4)),
+            ("rms_gate_enabled", "Gate RMS anti-rumore (true/false)", self.config_data.get("vad", {}).get("rms_gate_enabled", False)),
         ]
         for key, label, default_value in vad_params:
             lbl = tk.Label(params_frame, text=label, font=FONT, fg=FG, bg=BG, anchor="w")
@@ -105,6 +135,16 @@ class ConfigWindow:
             entry.insert(0, str(default_value))
             self.entries[key] = entry
             row += 1
+
+        note = tk.Label(
+            params_frame,
+            text="Il gate usa la 'Soglia RMS silenzio' della sezione Radio qui sotto:\n"
+                 "se attivo, un frame sotto quella soglia non è mai considerato parlato,\n"
+                 "anche se il VAD lo classifica come tale (utile contro statica/rumore).",
+            font=FONT_SMALL, fg=FG_DIM, bg=BG, justify="left", anchor="w"
+        )
+        note.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        row += 1
 
         # --- Sezione Filtro ---
         lbl_section = tk.Label(params_frame, text="Filtro Passa-Banda",
@@ -199,12 +239,16 @@ class ConfigWindow:
 
     def _get_patch_from_entries(self):
         return {
+            "audio": {
+                "input_gain": float(self.entries["input_gain"].get()),
+            },
             "vad": {
                 "aggressiveness": int(self.entries["aggressiveness"].get()),
                 "silence_timeout_s": float(self.entries["silence_timeout_s"].get()),
                 "max_utterance_s": float(self.entries["max_utterance_s"].get()),
                 "min_segment_duration_s": float(self.entries["min_segment_duration_s"].get()),
                 "activation_ratio": float(self.entries["activation_ratio"].get()),
+                "rms_gate_enabled": self.entries["rms_gate_enabled"].get().lower() == "true",
             },
             "filter": {
                 "enabled": self.entries["filter_enabled"].get().lower() == "true",
@@ -234,6 +278,12 @@ class ConfigWindow:
                 config = json.load(f)
         except Exception:
             config = {}
+
+        # Aggiorna cattura audio
+        if "audio" in patch:
+            if "audio" not in config:
+                config["audio"] = {}
+            config["audio"].update(patch["audio"])
 
         # Aggiorna VAD
         if "vad" in patch:
@@ -265,6 +315,10 @@ class ConfigWindow:
         return config
 
     def _update_entries_from_config(self, config):
+        # Cattura Audio
+        self.entries["input_gain"].delete(0, tk.END)
+        self.entries["input_gain"].insert(0, str(config.get("audio", {}).get("input_gain", 1.0)))
+
         # VAD
         self.entries["aggressiveness"].delete(0, tk.END)
         self.entries["aggressiveness"].insert(0, str(config.get("vad", {}).get("aggressiveness", 1)))
@@ -276,6 +330,8 @@ class ConfigWindow:
         self.entries["min_segment_duration_s"].insert(0, str(config.get("vad", {}).get("min_segment_duration_s", 0.6)))
         self.entries["activation_ratio"].delete(0, tk.END)
         self.entries["activation_ratio"].insert(0, str(config.get("vad", {}).get("activation_ratio", 0.4)))
+        self.entries["rms_gate_enabled"].delete(0, tk.END)
+        self.entries["rms_gate_enabled"].insert(0, str(config.get("vad", {}).get("rms_gate_enabled", False)))
 
         # Filtro
         self.entries["filter_enabled"].delete(0, tk.END)

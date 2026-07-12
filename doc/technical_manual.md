@@ -15,7 +15,7 @@ Documentazione per sviluppatori: architettura, struttura del codice, modello di 
 4. [Modello di concorrenza](#-modello-di-concorrenza)
 5. [Ciclo di vita del modello](#-ciclo-di-vita-del-modello)
 6. [EventBus e contratto degli eventi](#-eventbus-e-contratto-degli-eventi)
-7. [Schema di `config.json`](#-schema-di-configjson)
+7. [Configurazione dell'applicazione`](#configurazione-dell'applicazione)
 8. [Reload a caldo della configurazione](#-reload-a-caldo-della-configurazione)
 9. [Consideazioni](#considerazioni)
 10. [Estendere il progetto](#-estendere-il-progetto)
@@ -261,56 +261,102 @@ Eventi attualmente emessi e consumati da `gui/app.py::_poll_events`:
 
 ---
 
-## Schema di `config.json`
 
-```jsonc
-{
-  "local_model": {
-    "model_name": "jlvdoorn/whisper-large-v3-atco2-asr-atcosim", // repo Hugging Face
-    "device": "cuda",              // "cuda" o "cpu"
-    "language": "en",              // lingua forzata per la trascrizione
-    "max_new_tokens": 256,         // limite token generati per segmento
-    "no_repeat_ngram_size": 3,     // anti-loop
-    "repetition_penalty": 1.3,     // anti-loop
-    "use_initial_prompt": true,    // inietta il prompt ATC (vedi transcriber.py)
-    "reorder_timeout_s": 3.0       // timeout del buffer di riordino interno
-  },
-  "audio": {
-    "rate": 16000,
-    "channels": 1,
-    "frame_duration_ms": 30
-  },
-  "vad": {
-    "aggressiveness": 1,
-    "silence_timeout_s": 1.0,
-    "max_utterance_s": 15.0,
-    "min_segment_duration_s": 0.6,
-    "activation_ratio": 0.4
-  },
-  "filter": {
-    "enabled": true,
-    "band_min": 300,
-    "band_max": 3400
-  },
-  "debug": {
-    "enabled": false,
-    "log_to_file": true,
-    "console_level": "INFO"
-  },
-  "radio": {
-    "enabled": true,
-    "segment_duration_s": 3.0,
-    "bypass_vad": false,           // esposto in GUI ma NON collegato alla pipeline (vedi sotto)
-    "overlap_s": 0.3,
-    "silence_gate_enabled": true,
-    "silence_rms_threshold": 50,
-    "boundary_search_s": 0.4,
-    "boundary_analysis_ms": 20
-  }
-}
-```
+## Configurazione dell'applicazione
 
-> ⚠️ **La sezione `radio` non è implementata a livello di pipeline.** `main.run_pipeline` non legge mai `config["radio"]`; usa sempre `VADProcessor`. La GUI espone comunque il campo `bypass_vad` nella finestra di configurazione e, se impostato a `true`, lo segnala nell'etichetta "Modalità" come "non ancora implementato" invece di applicarlo silenziosamente — ma il resto dei parametri della sezione (`segment_duration_s`, `overlap_s`, `silence_gate_enabled`, `silence_rms_threshold`, `boundary_search_s`, `boundary_analysis_ms`) non ha alcun effetto allo stato attuale.
+Di seguito la documentazione completa di **tutti** i parametri disponibili nel file `config.json`.
+
+---
+
+## Voice Activity Detection (VAD)
+
+| Campo | Tipo | Valori | Descrizione |
+|-------|------|--------|-------------|
+| `aggressiveness` | intero | 0–3 | Grado di selettività del VAD. **0** = meno selettivo (cattura anche parlato debole ma più falsi positivi). **3** = massima selettività (riduce i falsi positivi ma rischia di escludere parlato a bassa voce). Valore consigliato: `1` per uso generico. |
+| `silence_timeout_s` | float | ≥ 0.1 | Secondi di silenzio continuo necessari per considerare un segmento concluso. Valori più bassi tagliano prima, valori più alti mantengono il segmento aperto più a lungo. Tipico: `1.0` s. |
+| `max_utterance_s` | float | ≥ 1.0 | Durata massima di un singolo segmento. Oltre questo limite il segmento viene forzato a concludersi. Previene trascrizioni eccessivamente lunghe. Default: `7.0` s. |
+| `min_segment_duration_s` | float | ≥ 0.1 | Durata minima accettabile per un segmento. Segmenti più brevi vengono scartati in quanto probabilmente rumore. Tipico: `0.6` s. |
+| `activation_ratio` | float | 0.0–1.0 | Rapporto minimo di frame "attivi" (con voce) rispetto al totale per iniziare un segmento. Valori più alti richiedono un parlato più continuo prima di attivarsi. Tipico: `0.4`. |
+| `rms_gate_enabled` | booleano | `true`/`false` | Se `true`, attiva un filtro aggiuntivo basato sull'energia RMS (Root Mean Square) del segnale. Esclude rumori a bassa energia ma persistenti (es. ronzio di fondo). Migliora la selettività in ambienti moderatamente rumorosi. |
+
+---
+
+## Filtro Passa‑Banda
+
+| Campo | Tipo | Valori | Descrizione |
+|-------|------|--------|-------------|
+| `enabled` | booleano | `true`/`false` | Attiva o disattiva il filtro passa‑banda. Se `false` l'audio viene processato senza filtraggio. |
+| `band_min` | intero | 20–20000 (Hz) | Frequenza minima (Hz) del filtro. Tutto ciò che è al di sotto viene attenuato. Tarato di default per la voce umana su VHF: `300` Hz. |
+| `band_max` | intero | 20–20000 (Hz) | Frequenza massima (Hz) del filtro. Tutto ciò che è al di sopra viene attenuato. Default: `3400` Hz (banda telefonica). |
+
+---
+
+## Modello Locale (Whisper)
+
+| Campo | Tipo | Valori | Descrizione |
+|-------|------|--------|-------------|
+| `model_name` | stringa | identificatore Hugging Face | Nome del modello Whisper da caricare (es. `"jlvdoorn/whisper-large-v3-atco2-asr-atcosim"`). **Richiede riavvio dell'app** per essere applicato. |
+| `device` | stringa | `"cpu"` / `"cuda"` | Dispositivo per l'inferenza. `"cuda"` usa la GPU (più veloce), `"cpu"` usa il processore. **Richiede riavvio**. |
+| `language` | stringa | codice ISO 639‑1 | Lingua forzata per la trascrizione. Es. `"en"` per inglese, `"it"` per italiano. Se non specificato, Whisper tenta di rilevarla automaticamente. |
+| `max_new_tokens` | intero | ≥ 1 | Numero massimo di token generati per ogni segmento. Valori più alti consentono trascrizioni più lunghe, ma aumentano il tempo di inferenza e il consumo di memoria. Tipico: `256`. |
+| `no_repeat_ngram_size` | intero | ≥ 1 | Dimensione del n‑gramma da evitare in ripetizione. Impostando `3`, il modello non genererà mai una sequenza di 3 token identici consecutivi. Riduce loop e allucinazioni. Tipico: `3`. |
+| `repetition_penalty` | float | ≥ 1.0 | Fattore di penalità per la ripetizione di token già generati. Valori > `1.0` scoraggiano la ripetizione. `1.3` è un buon compromesso per il parlato radiofonico. Valori troppo alti possono alterare la naturalezza. |
+| `use_initial_prompt` | booleano | `true`/`false` | Se `true`, il modello riceve un prompt iniziale (es. "Trascrivi il seguente audio") per migliorare la coerenza contestuale e la qualità della trascrizione. |
+| `reorder_timeout_s` | float | ≥ 0.1 | Tempo massimo (in secondi) di attesa per il riordino dei segmenti quando si utilizzano meccanismi di rilevamento fine (es. per gestire sovrapposizioni). Valori più alti migliorano la precisione a scapito della latenza. Tipico: `3.0` s. |
+
+> ⚠️ **Importante:** `model_name` e `device` richiedono il riavvio completo dell'applicazione (chiusura e riapertura della finestra). Modificarli a caldo non ha effetto.
+
+---
+
+## Audio
+
+Parametri di acquisizione e preprocessamento del segnale audio.
+
+| Campo | Tipo | Valori | Descrizione |
+|-------|------|--------|-------------|
+| `rate` | intero | 8000, 16000, 44100, ecc. | Frequenza di campionamento (Hz) per l'acquisizione. Whisper è ottimizzato per `16000` Hz; usare altri valori può degradare le prestazioni. |
+| `channels` | intero | 1 (mono) / 2 (stereo) | Numero di canali audio. Il sistema è progettato per flusso mono (`1`) per ridurre il carico di calcolo e semplificare il processing. |
+| `frame_duration_ms` | intero | 10–100 (ms) | Durata in millisecondi di ciascun frame audio processato dal VAD e dal filtro. `30` ms è il valore standard per il rilevamento vocale (bilanciamento tra precisione e reattività). |
+| `input_gain` | float | ≥ 0.1 | Guadagno moltiplicativo applicato al segnale in ingresso. Valori > `1.0` amplificano l'audio (utile per microfoni poco sensibili o sorgenti distanti). Attenzione a non saturare. Tipico: `1.0`. |
+
+---
+
+## Debug
+
+Controlli per il logging e la diagnostica.
+
+| Campo | Tipo | Valori | Descrizione |
+|-------|------|--------|-------------|
+| `enabled` | booleano | `true`/`false` | Attiva la modalità debug. Se `true`, vengono prodotti log dettagliati di ogni fase (VAD, trascrizione, filtri, ecc.), utili per il troubleshooting. |
+| `log_to_file` | booleano | `true`/`false` | Se `true`, i log vengono scritti anche su un file (oltre che sulla console). Il percorso del file è definito a livello di applicazione. |
+| `console_level` | stringa | `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"` | Livello di severità minimo per i messaggi mostrati nella console. `"DEBUG"` mostra tutto, `"ERROR"` solo gli errori critici. Per uso normale si consiglia `"INFO"`. |
+
+---
+
+## Impostazioni Radio
+
+Parametri specifici per la gestione di flussi audio radiofonici (es. comunicazioni VHF), con segmentazione e controllo del silenzio.
+
+| Campo | Tipo | Valori | Descrizione |
+|-------|------|--------|-------------|
+| `enabled` | booleano | `true`/`false` | Attiva/disattiva la modalità "radio". Se `false`, il sistema usa le impostazioni standard di VAD e segmentazione. |
+| `bypass_vad` | booleano | `true`/`false` | Se `true` il sistema tenta di usare una segmentazione a tempo fisso invece del VAD.  |
+| `segment_duration_s` | float | ≥ 0.5 | Durata fissa di ogni segmento quando si usa la segmentazione temporale (non VAD). Valore di default: `3.0` s. Usato solo se il VAD viene bypassato (non ancora implementato). |
+| `overlap_s` | float | 0.0 – `segment_duration_s` | Sovrapposizione in secondi tra segmenti consecutivi. Riduce il rischio di tagliare parole a cavallo dei confini. Valori tipici: `0.3`–`0.5` s. |
+| `silence_gate_enabled` | booleano | `true`/`false` | Se `true`, abilita un gate di silenzio basato sulla soglia RMS. Quando il livello scende sotto la soglia, la registrazione del segmento viene interrotta (utile per rumori di fondo intermittenti). |
+| `silence_rms_threshold` | intero | 0–32767 | Soglia RMS lineare per il gate di silenzio. Valori consigliati: `50` per ambienti molto silenziosi, `100–200` per ambienti con rumore di fondo moderato. Valori più alti rendono il gate meno sensibile. |
+| `boundary_search_s` | float | 0.1–1.0 | Ampiezza della finestra temporale (in secondi) entro cui cercare il punto di taglio ottimale intorno a un confine di segmento. Evita di troncare parole a metà. Tipico: `0.4` s. |
+| `boundary_analysis_ms` | intero | 5–50 | Risoluzione temporale (in millisecondi) dell'analisi per la ricerca dei confini. Valori più piccoli danno tagli più precisi ma aumentano il carico computazionale. Tipico: `20` ms. |
+
+---
+
+## Note generali
+
+- **Ordine di applicazione**: L'audio acquisito viene prima amplificato (`input_gain`), poi filtrato passa‑banda, quindi processato dal VAD (e/o dai controlli radio), e infine inviato al modello Whisper per la trascrizione.
+- **Consigli per prestazioni**:
+  - Per ridurre la latenza, diminuire `max_new_tokens` e `reorder_timeout_s`.
+  - Per migliorare la precisione in ambienti rumorosi, aumentare `aggressiveness` e abilitare `rms_gate_enabled`.
+  - Per trascrizioni più fluide, aumentare `overlap_s` e `boundary_search_s` (a scapito di un lieve aumento del carico).
 
 ---
 

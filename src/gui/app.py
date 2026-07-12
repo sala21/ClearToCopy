@@ -1,6 +1,8 @@
 import os
+import math
 import threading
 import time
+from collections import deque
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import json
@@ -35,6 +37,11 @@ class TranscriberGUI:
 
         self._last_rms = 0.0
         self._last_threshold = 50.0
+        # Storico dei livelli RMS per il grafico a barre scorrevole (vedi
+        # _draw_vu): ogni campione ~30ms, maxlen quindi determina quanti
+        # secondi di "storia" restano visibili (150 campioni ≈ 4-5s).
+        self._RMS_HISTORY_LEN = 150
+        self._rms_history = deque(maxlen=self._RMS_HISTORY_LEN)
 
         self.debug_enabled = False
         self.debug_window = None
@@ -90,7 +97,7 @@ class TranscriberGUI:
     # ------------------------------------------------------------------------
     def _build_ui(self):
         self.root.title("ClearToCopy - ATC Radio Transcriber")
-        self.root.geometry("1100x720")
+        self.root.geometry("1100x740")
         self.root.configure(bg=BG)
         self.root.minsize(960, 500)
 
@@ -180,7 +187,7 @@ class TranscriberGUI:
         vu_frame = self._card(left_col, "📊 LIVELLO SEGNALE (RMS)", height=80)
         vu_inner = tk.Frame(vu_frame, bg=CARD_BG)
         vu_inner.pack(fill="both", expand=True, padx=8, pady=8)
-        self.vu_canvas = tk.Canvas(vu_inner, height=24, bg="#05070a",
+        self.vu_canvas = tk.Canvas(vu_inner, height=90, bg="#05070a",
                                    highlightthickness=1, highlightbackground=BORDER)
         self.vu_canvas.pack(fill="x", pady=(0, 4))
         self.vu_value_label = tk.Label(vu_inner, text="RMS: -    Soglia: -",
@@ -401,33 +408,71 @@ class TranscriberGUI:
                  bg=PANEL_BG).pack(anchor="w", padx=10, pady=(6, 0))
         return frame
 
+    # Range dinamico mostrato dal VU meter, in dB relativi al fondo scala
+    # (32767, massimo campione int16). -60dB è un pavimento convenzionale:
+    # sotto quel livello consideriamo il segnale indistinguibile dal
+    # rumore di fondo/silenzio ai fini della visualizzazione (non della
+    # decisione VAD, che resta sempre in dominio lineare sull'RMS grezzo).
+    _VU_FLOOR_DB = -60.0
+
+    def _rms_to_frac(self, rms):
+        """Converte un valore RMS lineare in una frazione [0, 1] su scala
+        logaritmica (dB), per rendere leggibili sia segnali forti (voce
+        diretta, RMS anche >2000) sia segnali deboli (es. audio radio a
+        basso livello, RMS a due cifre) sulla stessa barra — su scala
+        lineare i secondi risultano visivamente indistinguibili dallo zero."""
+        if rms <= 0:
+            return 0.0
+        db = 20 * math.log10(rms / 32767.0)
+        db = max(db, self._VU_FLOOR_DB)
+        return (db - self._VU_FLOOR_DB) / (0.0 - self._VU_FLOOR_DB)
+
     def _draw_vu(self):
         c = self.vu_canvas
         c.delete("all")
         w = c.winfo_width()
         h = c.winfo_height()
-        if w <= 1:
+        if w <= 1 or h <= 1:
             return
 
-        max_scale = max(self._last_threshold * 6, self._last_rms * 1.2, 200)
-        frac = min(1.0, self._last_rms / max_scale)
-        fill_w = int(w * frac)
+        # Linea di soglia, disegnata per prima così resta "sotto" le barre.
+        thr_frac = self._rms_to_frac(self._last_threshold)
+        thr_y = h - int(h * thr_frac)
+        c.create_line(0, thr_y, w, thr_y, fill=ACCENT_AMBER, width=1, dash=(3, 2))
 
-        if self._last_rms < self._last_threshold:
-            color = FG_DIM
-        elif frac < 0.6:
-            color = ACCENT_GREEN
-        elif frac < 0.85:
-            color = ACCENT_AMBER
-        else:
-            color = ACCENT_RED
+        history = list(self._rms_history)
+        n = len(history)
+        if n == 0:
+            return
 
-        if fill_w > 0:
-            c.create_rectangle(0, 0, fill_w, h, fill=color, outline="")
+        # Larghezza di colonna fissa (basata sulla capacità massima dello
+        # storico, non su quanti campioni abbiamo accumulato finora): così
+        # il grafico non "si allarga" man mano che arrivano dati subito
+        # dopo l'avvio, resta stabile.
+        col_w = w / self._RMS_HISTORY_LEN
 
-        thr_frac = min(1.0, self._last_threshold / max_scale)
-        thr_x = int(w * thr_frac)
-        c.create_line(thr_x, 0, thr_x, h, fill=ACCENT_AMBER, width=2)
+        for i, rms in enumerate(history):
+            frac = self._rms_to_frac(rms)
+            bar_h = int(h * frac)
+            if bar_h <= 0:
+                continue
+            # Ancorato al bordo destro: il campione più recente è sempre
+            # l'ultima colonna, quelli più vecchi scorrono verso sinistra
+            # ed escono dallo storico (deque a lunghezza fissa).
+            x0 = w - (n - i) * col_w
+            x1 = x0 + max(1.0, col_w - 1)
+            y0 = h - bar_h
+
+            if rms < self._last_threshold:
+                color = FG_DIM
+            elif frac < 0.6:
+                color = ACCENT_GREEN
+            elif frac < 0.85:
+                color = ACCENT_AMBER
+            else:
+                color = ACCENT_RED
+
+            c.create_rectangle(x0, y0, x1, h, fill=color, outline="")
 
     # ------------------------------------------------------------------------
     # Gestione stati UI
@@ -619,13 +664,29 @@ class TranscriberGUI:
                     min_segment_duration_s=vad_cfg.get("min_segment_duration_s", 0.6),
                     activation_ratio=vad_cfg.get("activation_ratio", 0.4),
                     rms_threshold=radio_cfg.get("silence_rms_threshold", 50.0),
+                    rms_gate_enabled=vad_cfg.get("rms_gate_enabled", False),
                 )
                 logging.getLogger("AudioTranscriber").info(
-                    "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f, soglia_rms=%.1f",
-                    segmenter.aggressiveness, segmenter.activation_ratio, segmenter.rms_threshold
+                    "Parametri VAD aggiornati: aggressiveness=%d, activation_ratio=%.2f, "
+                    "soglia_rms=%.1f, gate_rms=%s",
+                    segmenter.aggressiveness, segmenter.activation_ratio,
+                    segmenter.rms_threshold, segmenter.rms_gate_enabled
                 )
             except Exception as e:
                 self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del VAD: {e}", fg=ACCENT_AMBER)
+
+        # Aggiorna il guadagno di ingresso sulla cattura audio già in corso.
+        # Semplice riassegnazione di un attributo: AudioCapture applica il
+        # nuovo valore dal frame successivo, senza bisogno di riavviare nulla.
+        audio_capture = self._pipeline_components.get("audio")
+        if audio_capture is not None:
+            try:
+                audio_capture.input_gain = config.get("audio", {}).get("input_gain", 1.0)
+                logging.getLogger("AudioTranscriber").info(
+                    "Guadagno di ingresso aggiornato: %.2fx", audio_capture.input_gain
+                )
+            except Exception as e:
+                self.error_label.config(text=f"⚠️ Errore nell'aggiornamento del guadagno: {e}", fg=ACCENT_AMBER)
         
         # Aggiorna il Transcriber (filtro)
         try:
@@ -715,6 +776,10 @@ class TranscriberGUI:
 
         self._uptime_start = time.time()
         self.uptime_label.config(text="00:00:00")
+
+        self._rms_history.clear()
+        self._last_rms = 0.0
+        self._draw_vu()
 
         if self.debug_enabled:
             clear_log_file()
@@ -823,17 +888,24 @@ class TranscriberGUI:
     # Polling eventi (bus → GUI)
     # ------------------------------------------------------------------------
     def _poll_events(self):
+        rms_updated = False
         for kind, data in self.bus.poll_all():
             if kind == "rms":
                 self._last_rms = data.get("value", 0.0)
                 self._last_threshold = data.get("threshold", self._last_threshold)
+                self._rms_history.append(self._last_rms)
+                rms_updated = True
                 accepted = data.get("accepted", True)
                 accepted_label = "● ACCETTATO" if accepted else "○ SILENZIO (scartato)"
                 self.vu_value_label.config(
                     text=f"RMS: {self._last_rms:.1f}    Soglia: {self._last_threshold:.1f}    {accepted_label}",
                     fg=ACCENT_GREEN if accepted else FG_DIM
                 )
-                self._draw_vu()
+                # Niente self._draw_vu() qui: gli eventi "rms" arrivano ogni
+                # ~30ms mentre il poll gira ogni 100ms, quindi in un ciclo
+                # tipico ne arrivano 2-3. Li accumuliamo tutti nello storico
+                # e ridisegniamo il canvas una volta sola a fine ciclo,
+                # invece di rifare N redraw ridondanti per lo stesso tick.
             elif kind == "transcript":
                 self._append_transcript(data.get("text"))
             elif kind == "metrics":
@@ -844,7 +916,7 @@ class TranscriberGUI:
                     self.metric_labels["avg_time"].config(text=f"{data['avg_time']:.2f}s")
             elif kind == "error":
                 self.error_label.config(text=f"❌ Errore: {data.get('message', '')}", fg=ACCENT_RED)
-                self._update_status_item("🌐 Groq API", False, "ERRORE")
+                self._update_status_item("🧠 Modello Locale", False, "ERRORE")
             elif kind == "stopped":
                 self.running = False
                 self.start_btn.config(state="normal")
@@ -863,7 +935,10 @@ class TranscriberGUI:
             elif kind == "audio_started":
                 self._set_status("IN ASCOLTO", ACCENT_GREEN)
                 self.error_label.config(text="🎤 Ascolto attivo...", fg=ACCENT_GREEN)
-            
+
+        if rms_updated:
+            self._draw_vu()
+
         self.root.after(100, self._poll_events)
 
     def _append_transcript(self, text):
