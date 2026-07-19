@@ -60,7 +60,7 @@ cd Real-Time-Speech-To-Text-AirBand-tool
 
 ```bash
 python -m venv venv
-venv\Scripts\activate          # Windows
+.\venv\Scripts\Activate.ps1         # Windows(PowerShell)
 source venv/bin/activate       # Linux/macOS
 ```
 
