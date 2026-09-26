@@ -1,9 +1,9 @@
-# NOTA IMPORTANTE: torch va installato A PARTE, PRIMA di questo file,
-# con la build CUDA corretta per la tua scheda (RTX 5050 = Blackwell,
-# serve CUDA 12.8+ e PyTorch 2.7.0+). Esempio:
+# WARNING: torch must be installed SEPARATELY, BEFORE this file,
+# with the correct CUDA build for your card (RTX 5050 = Blackwell,
+# requires CUDA 12.8+ and PyTorch 2.7.0+). Example:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
-# Se lo metti anche qui in requirements.txt, pip potrebbe installare una
-# build CPU-only e sovrascrivere quella CUDA già installata.
+# If you also add it here in requirements.txt, pip might install a
+# CPU-only build and overwrite the CUDA one already installed.
 
 altgraph==0.17.5
 certifi==2026.6.17
