@@ -1,277 +1,277 @@
-# ClearToCopy — Manuale Utente
+# ClearToCopy — User Manual
 
-**ClearToCopy** è un'applicazione desktop per la trascrizione in tempo reale di comunicazioni radio ATC (Air Traffic Control). Cattura l'audio da microfono o linea audio, isola automaticamente le singole trasmissioni con un rilevatore di attività vocale (VAD), e le trascrive con un modello Whisper specializzato in fraseologia aeronautica — **eseguito interamente in locale sulla GPU del computer**, senza inviare alcun dato audio a servizi esterni.
-
----
-
-## Indice
-
-1. [Panoramica](#-panoramica)
-2. [Requisiti di sistema](#-requisiti-di-sistema)
-3. [Avvio dell'applicazione](#-avvio-dellapplicazione)
-4. [Interfaccia principale](#-interfaccia-principale)
-5. [Comandi e controlli](#-comandi-e-controlli)
-6. [Menu laterale](#-menu-laterale)
-7. [Finestra di configurazione](#-finestra-di-configurazione)
-8. [Finestra di debug](#-finestra-di-debug)
-9. [Stati e indicatori](#-stati-e-indicatori)
-10. [Salvataggio delle trascrizioni](#-salvataggio-delle-trascrizioni)
-11. [Salvataggio dei log di debug](#-salvataggio-dei-log-di-debug)
-12. [Risoluzione dei problemi](#-risoluzione-dei-problemi)
+**ClearToCopy** is a desktop application for real-time transcription of ATC (Air Traffic Control) radio communications. It captures audio from a microphone or audio line, automatically isolates individual transmissions using a voice activity detector (VAD), and transcribes them with a Whisper model specialized in aviation phraseology — **running entirely locally on the computer's GPU**, without sending any audio data to external services.
 
 ---
 
-## Panoramica
+## Table of Contents
 
-ClearToCopy è pensato per:
-
-- **Trascrivere in tempo reale** le comunicazioni radio ATC catturate dal microfono o da una linea audio collegata al computer.
-- **Rilevare automaticamente** l'inizio e la fine di ogni trasmissione, grazie al rilevatore di attività vocale (VAD).
-- **Filtrare l'audio** con un filtro passa-banda (300–3400 Hz) per isolare la voce umana dal rumore di fondo.
-- **Mostrare in tempo reale** il livello del segnale audio, lo stato del sistema e le metriche di elaborazione.
-- **Salvare** le trascrizioni su file `.txt` e, se necessario, i log tecnici su file separati.
-
-L'intera trascrizione avviene **sul tuo computer**: non è richiesta una connessione internet durante il funzionamento (serve solo la prima volta, per scaricare il modello, e per l'avvio di ogni sessione dell'applicazione).
-
----
-
-## Requisiti di sistema
-
-- **Sistema operativo**: Windows 10/11 (ambiente di riferimento)
-- **Python** 3.10 o superiore, con le dipendenze del progetto già installate (vedi [`README.md`](../README.md))
-- **GPU NVIDIA** con almeno 8 GB di VRAM, driver aggiornato — fortemente consigliata. In assenza di GPU compatibile, l'applicazione può girare su CPU, ma con tempi di trascrizione molto più lunghi.
-- **Microfono o linea audio** configurata correttamente nel sistema operativo.
-- Circa **3 GB di spazio libero su disco** per il modello di trascrizione (scaricato automaticamente al primo avvio).
-- **Pillow** (opzionale): se presente, mostra una piccola illustrazione decorativa nel menu laterale. Se assente, l'applicazione funziona comunque normalmente, semplicemente senza quel dettaglio grafico.
+1. [Overview](#-overview)
+2. [System Requirements](#-system-requirements)
+3. [Starting the Application](#-starting-the-application)
+4. [Main Interface](#-main-interface)
+5. [Commands and Controls](#-commands-and-controls)
+6. [Side Menu](#-side-menu)
+7. [Configuration Window](#-configuration-window)
+8. [Debug Window](#-debug-window)
+9. [States and Indicators](#-states-and-indicators)
+10. [Saving Transcriptions](#-saving-transcriptions)
+11. [Saving Debug Logs](#-saving-debug-logs)
+12. [Troubleshooting](#-troubleshooting)
 
 ---
 
-## Avvio dell'applicazione
+## Overview
 
-Da terminale, nella cartella del progetto (con l'ambiente virtuale attivo):
+ClearToCopy is designed to:
+
+- **Transcribe in real time** the ATC radio communications captured from a microphone or an audio line connected to the computer.
+- **Automatically detect** the start and end of each transmission, thanks to the voice activity detector (VAD).
+- **Filter the audio** with a band-pass filter (300–3400 Hz) to isolate the human voice from background noise.
+- **Show in real time** the audio signal level, system status, and processing metrics.
+- **Save** transcriptions to a `.txt` file and, if needed, technical logs to separate files.
+
+The entire transcription happens **on your computer**: no internet connection is required while it's running (it's only needed the first time, to download the model, and at the start of each application session).
+
+---
+
+## System Requirements
+
+- **Operating system**: Windows 10/11 (reference environment)
+- **Python** 3.10 or higher, with the project's dependencies already installed (see [`README.md`](../README.md))
+- **NVIDIA GPU** with at least 8 GB of VRAM, updated driver — strongly recommended. Without a compatible GPU, the application can run on CPU, but with much longer transcription times.
+- **Microphone or audio line** correctly configured in the operating system.
+- About **3 GB of free disk space** for the transcription model (downloaded automatically on first launch).
+- **Pillow** (optional): if present, shows a small decorative illustration in the side menu. If absent, the application still works normally, simply without that graphical detail.
+
+---
+
+## Starting the Application
+
+From a terminal, in the project folder (with the virtual environment active):
 
 ```bash
 python gui_main.py
 ```
 
-Si apre la finestra principale. **Il modello di trascrizione viene caricato automaticamente e subito**, non appena la finestra compare — non serve alcuna azione da parte tua. Durante questa fase:
+The main window opens. **The transcription model is loaded automatically and immediately**, as soon as the window appears — no action is required from you. During this phase:
 
-- Il pulsante **▶ AVVIA** resta disabilitato.
-- La barra inferiore mostra `⏳ Caricamento modello in corso...`.
-- L'indicatore **🧠 Modello Locale** nel pannello di stato resta rosso.
+- The **▶ START** button remains disabled.
+- The bottom bar shows `⏳ Loading model...`.
+- The **🧠 Local Model** indicator in the status panel stays red.
 
-Il caricamento può richiedere fino a circa un minuto (dipende dalla velocità del disco e se il modello è già in cache da un avvio precedente). Al termine, il pulsante **▶ AVVIA** si attiva e la barra mostra `✅ Modello caricato. Premi 'Avvia' per iniziare.`
+Loading can take up to about a minute (depending on disk speed and whether the model is already cached from a previous launch). Once done, the **▶ START** button becomes active and the bar shows `✅ Model loaded. Press 'Start' to begin.`
 
-> 💡 **Il modello resta in memoria per tutta la durata della sessione dell'applicazione**, anche se premi più volte STOP e poi AVVIA: solo la prima volta, all'apertura del programma, c'è da attendere. Il modello viene scaricato dalla memoria video (VRAM) solo quando chiudi completamente la finestra.
-
----
-
-## Interfaccia principale
-
-La finestra è divisa in tre aree:
-
-### Intestazione (in alto)
-
-- **☰ Menu**: mostra/nasconde il menu laterale.
-- **Indicatore di stato**: pallino colorato + etichetta testuale (`FERMO`, `IN ASCOLTO`) che riassume lo stato generale dell'applicazione.
-
-### Colonna centrale (dashboard)
-
-- **Livello Segnale (RMS)**: un misuratore orizzontale che mostra in tempo reale il livello del segnale audio in ingresso, con una linea verticale che indica la soglia oltre la quale l'audio viene considerato "parlato" e non silenzio. Sotto al misuratore, un'etichetta numerica riporta RMS, soglia, ed esito (`● ACCETTATO` o `○ SILENZIO (scartato)`).
-- **Trascrizione**: il pannello principale, dove compare il testo trascritto, riga per riga, ciascuna preceduta dall'orario in cui è stata riconosciuta. Se un segmento audio non produce testo riconoscibile, compare la dicitura `(nessun testo riconosciuto)`.
-
-### Colonna laterale destra
-
-- **Dettagli Configurazione**: riepilogo rapido e in sola lettura di modello in uso, lingua, sensibilità VAD e device (`cuda`/`cpu`).
-- **Stato Sistema**: tre indicatori — Microfono, Modello Locale, Filtro — ciascuno con pallino colorato (verde = attivo/ok, rosso = non attivo) e testo di stato. Include anche il tempo trascorso dall'avvio della trascrizione (**Uptime**).
-- **Metriche**: contatori aggiornati in tempo reale — segmenti audio inviati, completati, falliti, tempo medio di elaborazione, dimensione della coda in attesa.
-
-### Barra inferiore
-
-Una riga di testo colorato che mostra l'ultimo messaggio di stato o errore dell'applicazione (es. conferme di salvataggio, avvisi, errori).
+> 💡 **The model stays in memory for the entire duration of the application session**, even if you press STOP and then START multiple times: only the first time, when the program opens, is there a wait. The model is unloaded from video memory (VRAM) only when you fully close the window.
 
 ---
 
-## Comandi e controlli
+## Main Interface
 
-| Comando | Funzione |
+The window is divided into three areas:
+
+### Header (top)
+
+- **☰ Menu**: shows/hides the side menu.
+- **Status indicator**: a colored dot + text label (`STOPPED`, `LISTENING`) summarizing the application's overall state.
+
+### Center column (dashboard)
+
+- **Signal Level (RMS)**: a horizontal meter showing the incoming audio signal level in real time, with a vertical line marking the threshold above which the audio is considered "speech" rather than silence. Below the meter, a numeric label reports RMS, threshold, and outcome (`● ACCEPTED` or `○ SILENCE (discarded)`).
+- **Transcription**: the main panel, where the transcribed text appears line by line, each preceded by the time it was recognized. If an audio segment produces no recognizable text, the label `(no text recognized)` appears.
+
+### Right side column
+
+- **Configuration Details**: a quick, read-only summary of the model in use, language, VAD sensitivity, and device (`cuda`/`cpu`).
+- **System Status**: three indicators — Microphone, Local Model, Filter — each with a colored dot (green = active/ok, red = not active) and a status text. Also includes the elapsed time since transcription started (**Uptime**).
+- **Metrics**: counters updated in real time — audio segments sent, completed, failed, average processing time, size of the waiting queue.
+
+### Bottom bar
+
+A line of colored text showing the application's latest status or error message (e.g. save confirmations, warnings, errors).
+
+---
+
+## Commands and Controls
+
+| Command | Function |
 |---|---|
-| **▶ AVVIA** | Avvia la cattura audio e la trascrizione. Disponibile solo dopo che il modello è stato caricato (vedi [Avvio dell'applicazione](#-avvio-dellapplicazione)). Ogni volta che viene premuto, i contatori delle metriche vengono azzerati, ma il modello resta caricato in memoria — l'avvio è quindi rapido. |
-| **■ STOP** | Ferma la cattura audio e la trascrizione (il modello resta comunque caricato in memoria, pronto per un nuovo Avvia). Prima di fermarsi, l'applicazione chiede se vuoi salvare la trascrizione accumulata e, se la modalità debug è attiva, anche il log tecnico. |
-| **DEBUG ON/OFF** | Attiva/disattiva la registrazione dettagliata dei log tecnici su file, utile in caso di comportamenti anomali da segnalare. Non influisce sulla trascrizione stessa. |
-| **☰ Menu** | Mostra/nasconde il menu laterale. |
+| **▶ START** | Starts audio capture and transcription. Available only after the model has been loaded (see [Starting the Application](#-starting-the-application)). Each time it's pressed, the metric counters are reset, but the model stays loaded in memory — so starting is fast. |
+| **■ STOP** | Stops audio capture and transcription (the model stays loaded in memory regardless, ready for a new Start). Before stopping, the application asks whether you want to save the accumulated transcription and, if debug mode is active, the technical log as well. |
+| **DEBUG ON/OFF** | Enables/disables detailed recording of technical logs to a file, useful in case of unusual behavior that needs to be reported. Does not affect the transcription itself. |
+| **☰ Menu** | Shows/hides the side menu. |
 
 ---
 
-## Menu laterale
+## Side Menu
 
-Accessibile tramite il pulsante **☰ Menu** in alto a sinistra, contiene tre pulsanti:
+Accessible via the **☰ Menu** button at the top left, it contains three buttons:
 
-- **Debug**: apre la [finestra di debug](#-finestra-di-debug), che mostra in tempo reale il contenuto del file di log.
-- **Config**: apre la [finestra di configurazione](#-finestra-di-configurazione).
-- **Ric CFG Live**: ricarica `config.json` da disco e applica a caldo le modifiche a VAD, filtro e (in parte) ai parametri del modello, **senza dover fermare e riavviare la trascrizione**. Funziona solo se la trascrizione è già in corso (dopo aver premuto AVVIA).
+- **Debug**: opens the [debug window](#-debug-window), which shows the contents of the log file in real time.
+- **Config**: opens the [configuration window](#-configuration-window).
+- **Live Reload CFG**: reloads `config.json` from disk and applies the changes to VAD, filter, and (partially) the model parameters on the fly, **without needing to stop and restart transcription**. Only works if transcription is already running (after pressing START).
 
 ---
 
-## Finestra di configurazione
+## Configuration Window
 
-Apribile dal menu laterale (**⚙️ Config**), permette di modificare `config.json` senza editarlo manualmente a mano. È divisa in quattro sezioni:
+Opened from the side menu (**⚙️ Config**), it lets you modify `config.json` without editing it by hand. It's divided into four sections:
 
-# Configurazione dell'applicazione
+# Application Configuration
 
-Di seguito la documentazione completa di tutti i parametri disponibili nel file `config.json`, comprese le aggiunte recenti.
+Below is the full documentation of all parameters available in the `config.json` file, including recent additions.
 
 ---
 
 ## Voice Activity Detection (VAD)
 
-| Campo | Significato |
-|-------|-------------|
-| `aggressiveness` (0-3) | Quanto il rilevatore è selettivo nel distinguere parlato da rumore. Valori più alti = più selettivo, rischio di perdere parlato debole. |
-| `silence_timeout_s` | Quanto silenzio continuo serve per considerare conclusa una trasmissione. |
-| `max_utterance_s` | Durata massima di un singolo segmento, oltre la quale viene tagliato forzatamente. |
-| `min_segment_duration_s` | Durata minima sotto la quale un segmento viene scartato come probabile rumore. |
-| `activation_ratio` (0-1) | Quanto "convintamente" deve essere rilevato del parlato prima di iniziare a registrare un segmento. |
-| `rms_gate_enabled` | Se `true`, abilita un ulteriore filtro basato sull'energia RMS del segnale. Utile per escludere rumori a bassa energia ma persistenti, migliorando la selettività del VAD. |
+| Field | Meaning |
+|-------|---------|
+| `aggressiveness` (0-3) | How selective the detector is in distinguishing speech from noise. Higher values = more selective, with a risk of missing weak speech. |
+| `silence_timeout_s` | How much continuous silence is needed to consider a transmission concluded. |
+| `max_utterance_s` | Maximum duration of a single segment, beyond which it is forcibly cut. |
+| `min_segment_duration_s` | Minimum duration below which a segment is discarded as likely noise. |
+| `activation_ratio` (0-1) | How "confidently" speech must be detected before starting to record a segment. |
+| `rms_gate_enabled` | If `true`, enables an additional filter based on the signal's RMS energy. Useful for excluding low-energy but persistent noise, improving the VAD's selectivity. |
 
 ---
 
-## Filtro Passa‑Banda
+## Band-Pass Filter
 
-| Campo | Significato |
-|-------|-------------|
-| `enabled` | Attiva/disattiva il filtro. |
-| `band_min` / `band_max` (Hz) | Intervallo di frequenze lasciato passare — di default tarato sulla voce umana su radio VHF. |
+| Field | Meaning |
+|-------|---------|
+| `enabled` | Enables/disables the filter. |
+| `band_min` / `band_max` (Hz) | Frequency range let through — tuned by default for the human voice over VHF radio. |
 
 ---
 
-## Modello Locale (Whisper)
+## Local Model (Whisper)
 
-| Campo | Significato |
-|-------|-------------|
-| `model_name` | Identificativo del modello Whisper da usare (repository Hugging Face). |
-| `device` (`cpu`/`cuda`) | Dove eseguire l'inferenza. |
-| `language` | Lingua forzata per la trascrizione. |
-| `max_new_tokens` | Numero massimo di token generati per ogni segmento. Valori più alti consentono trascrizioni più lunghe ma aumentano il tempo di inferenza. |
-| `no_repeat_ngram_size` | Impedisce la ripetizione di sequenze di *n* grammi all'interno dell'output. Con `3` non vengono ripetute triplette consecutive, riducendo loop e allucinazioni. |
-| `repetition_penalty` | Penalizza la generazione di token già apparsi. Valori > 1.0 riducono le ripetizioni; il default (1.3) è un buon compromesso per il parlato radiofonico. |
-| `use_initial_prompt` | Se `true`, il modello utilizza un prompt iniziale per migliorare la coerenza contestuale. |
-| `reorder_timeout_s` | Tempo massimo (in secondi) di attesa per il riordino dei segmenti in meccanismi di rilevamento fine. Valori più alti possono migliorare la precisione in presenza di sovrapposizioni. |
+| Field | Meaning |
+|-------|---------|
+| `model_name` | Identifier of the Whisper model to use (Hugging Face repository). |
+| `device` (`cpu`/`cuda`) | Where to run inference. |
+| `language` | Forced language for transcription. |
+| `max_new_tokens` | Maximum number of tokens generated per segment. Higher values allow longer transcriptions but increase inference time. |
+| `no_repeat_ngram_size` | Prevents repetition of n-gram sequences within the output. With `3`, no consecutive triplets are repeated, reducing loops and hallucinations. |
+| `repetition_penalty` | Penalizes generation of tokens that already appeared. Values > 1.0 reduce repetitions; the default (1.3) is a good compromise for radio speech. |
+| `use_initial_prompt` | If `true`, the model uses an initial prompt to improve contextual coherence. |
+| `reorder_timeout_s` | Maximum wait time (in seconds) for reordering segments in fine-grained detection mechanisms. Higher values can improve accuracy in the presence of overlaps. |
 
-> ⚠️ **Importante:** Modificare `model_name` o `device` richiede di fermare e riavviare l'intera applicazione (chiudere e riaprire la finestra) — non basta STOP/AVVIA, perché il modello viene caricato una sola volta all'apertura del programma.
+> ⚠️ **Important:** Changing `model_name` or `device` requires stopping and restarting the entire application (closing and reopening the window) — STOP/START alone is not enough, because the model is loaded only once when the program opens.
 
 ---
 
 ## Audio
 
-Parametri relativi alla cattura e al preprocessamento del segnale:
+Parameters related to capturing and pre-processing the signal:
 
-| Campo | Significato |
-|-------|-------------|
-| `rate` | Frequenza di campionamento (Hz) a cui l'audio viene acquisito. Il valore 16000 è ottimale per Whisper. |
-| `channels` | Numero di canali audio (1 = mono). Il sistema si aspetta un flusso mono per ridurre il carico. |
-| `frame_duration_ms` | Durata (in millisecondi) di ogni frame elaborato dal VAD e dal filtro. 30 ms è il valore standard per il rilevamento vocale. |
-| `input_gain` | Guadagno applicato al segnale in ingresso (fattore moltiplicativo). Valori > 1.0 amplificano l'audio, utili per sorgenti deboli. |
+| Field | Meaning |
+|-------|---------|
+| `rate` | Sample rate (Hz) at which the audio is acquired. The value 16000 is optimal for Whisper. |
+| `channels` | Number of audio channels (1 = mono). The system expects a mono stream to reduce load. |
+| `frame_duration_ms` | Duration (in milliseconds) of each frame processed by the VAD and the filter. 30 ms is the standard value for voice detection. |
+| `input_gain` | Gain applied to the incoming signal (multiplicative factor). Values > 1.0 amplify the audio, useful for weak sources. |
 
 ---
 
 ## Debug
 
-Parametri per il logging e la diagnostica:
+Parameters for logging and diagnostics:
 
-| Campo | Significato |
-|-------|-------------|
-| `enabled` | Attiva/disattiva la modalità debug. Se `true`, vengono prodotti log dettagliati. |
-| `log_to_file` | Se `true`, i log vengono scritti su file (oltre che sulla console). |
-| `console_level` | Livello di severità minimo per i messaggi visualizzati sulla console (es. `"INFO"`, `"DEBUG"`, `"WARNING"`). |
-
----
-
-## Impostazioni Radio
-
-| Campo | Significato |
-|-------|-------------|
-| `bypass_vad` | *(riservato)* Se `true`, tenta di usare una segmentazione a tempo fisso, ma **in questa versione il VAD rimane sempre attivo**; viene solo visualizzato un avviso nella barra "Modalità". |
-| `segment_duration_s` | Durata fissa (in secondi) di ogni segmento nella segmentazione temporale (non basata su VAD). Default 3.0 s. |
-| `overlap_s` | Sovrapposizione (in secondi) tra segmenti consecutivi, per evitare tagli netti in corrispondenza di parole. |
-| `silence_gate_enabled` | Se `true`, attiva un gate di silenzio basato sulla soglia RMS per interrompere la registrazione quando il livello scende sotto la soglia. |
-| `silence_rms_threshold` | Soglia RMS (valore lineare, 0–32767) per il gate di silenzio. Valori tipici: 50 per ambienti silenziosi, 100–200 per ambienti rumorosi. |
-| `boundary_search_s` | Ampiezza della finestra (in secondi) in cui cercare il punto di taglio ottimale intorno a un confine di segmento, per evitare di troncare parole. |
-| `boundary_analysis_ms` | Risoluzione (in millisecondi) dell'analisi per la ricerca dei confini. Valori più piccoli danno tagli più precisi ma aumentano il carico computazionale. |
+| Field | Meaning |
+|-------|---------|
+| `enabled` | Enables/disables debug mode. If `true`, detailed logs are produced. |
+| `log_to_file` | If `true`, logs are written to a file (in addition to the console). |
+| `console_level` | Minimum severity level for messages shown on the console (e.g. `"INFO"`, `"DEBUG"`, `"WARNING"`). |
 
 ---
 
+## Radio Settings
 
-**Pulsanti:**
-- **🔄 APPLICA**: salva su `config.json` e applica subito le modifiche, senza chiudere la finestra.
-- **✅ OK**: chiude la finestra. **Importante:** se non hai mai premuto "Applica" durante quella sessione della finestra, "OK" chiude senza salvare le modifiche — premi sempre prima **APPLICA** se vuoi che le modifiche abbiano effetto, poi eventualmente "OK" per chiudere.
+| Field | Meaning |
+|-------|---------|
+| `bypass_vad` | *(reserved)* If `true`, attempts to use fixed-time segmentation, but **in this version the VAD always stays active**; only a warning is shown in the "Mode" bar. |
+| `segment_duration_s` | Fixed duration (in seconds) of each segment in time-based segmentation (not VAD-based). Default 3.0 s. |
+| `overlap_s` | Overlap (in seconds) between consecutive segments, to avoid sharp cuts in the middle of words. |
+| `silence_gate_enabled` | If `true`, enables a silence gate based on the RMS threshold to stop recording when the level drops below the threshold. |
+| `silence_rms_threshold` | RMS threshold (linear value, 0–32767) for the silence gate. Typical values: 50 for quiet environments, 100–200 for noisy environments. |
+| `boundary_search_s` | Width of the window (in seconds) in which to search for the optimal cut point around a segment boundary, to avoid truncating words. |
+| `boundary_analysis_ms` | Resolution (in milliseconds) of the analysis for boundary search. Smaller values give more precise cuts but increase computational load. |
 
 ---
 
-## Finestra di debug
 
-Mostra in tempo reale (aggiornamento ogni mezzo secondo) il contenuto del file di log tecnico dell'applicazione (`transcriber.log`, nella cartella del progetto). Utile per capire cosa sta succedendo "dietro le quinte" in caso di comportamenti inattesi, o da allegare a una segnalazione di problema.
+**Buttons:**
+- **🔄 APPLY**: saves to `config.json` and applies the changes immediately, without closing the window.
+- **✅ OK**: closes the window. **Important:** if you never pressed "Apply" during that window session, "OK" closes without saving the changes — always press **APPLY** first if you want the changes to take effect, then "OK" if you want to close.
 
 ---
 
-## Stati e indicatori
+## Debug Window
 
-| Indicatore | Significato |
+Shows in real time (updated every half second) the contents of the application's technical log file (`transcriber.log`, in the project folder). Useful for understanding what's happening "behind the scenes" in case of unexpected behavior, or to attach to a bug report.
+
+---
+
+## States and Indicators
+
+| Indicator | Meaning |
 |---|---|
-| 🟢 pallino verde | Componente attivo / funzionante |
-| 🔴 pallino rosso | Componente non attivo / in errore |
-| Stato generale `FERMO` | Trascrizione non in corso (il modello può comunque essere già caricato) |
-| Stato generale `IN ASCOLTO` | Trascrizione in corso |
-| Modello Locale `NON CARICATO` | Caricamento non ancora avviato o fallito |
-| Modello Locale `CARICATO` | Modello pronto in VRAM |
+| 🟢 green dot | Component active / working |
+| 🔴 red dot | Component not active / in error |
+| Overall state `STOPPED` | Transcription not running (the model may still already be loaded) |
+| Overall state `LISTENING` | Transcription in progress |
+| Local Model `NOT LOADED` | Loading not yet started or failed |
+| Local Model `LOADED` | Model ready in VRAM |
 
-**Colori del misuratore di livello (RMS):**
-- Grigio: al di sotto della soglia (silenzio)
-- Verde: livello normale
-- Ambra: livello alto
-- Rosso: livello molto alto, possibile saturazione del segnale
+**Level meter (RMS) colors:**
+- Gray: below the threshold (silence)
+- Green: normal level
+- Amber: high level
+- Red: very high level, possible signal clipping
 
 ---
 
-## Salvataggio delle trascrizioni
+## Saving Transcriptions
 
-Premendo **■ STOP**, se sono state raccolte righe di trascrizione, l'applicazione chiede se salvarle in un file di testo. Confermando, viene creato un file nella cartella del progetto con nome nel formato:
+Pressing **■ STOP**, if transcription lines have been collected, the application asks whether to save them to a text file. If confirmed, a file is created in the project folder with a name in the format:
 
 ```
-transcript_AAAAMMGG_HHMMSS.txt
+transcript_YYYYMMDD_HHMMSS.txt
 ```
 
-Se scegli di non salvare, la trascrizione accumulata viene scartata definitivamente — assicurati di rispondere "Sì" se ti serve conservarla. Ricomincia da zero a ogni nuovo **▶ AVVIA**.
+If you choose not to save, the accumulated transcription is permanently discarded — make sure to answer "Yes" if you need to keep it. It starts fresh with every new **▶ START**.
 
 ---
 
-## Salvataggio dei log di debug
+## Saving Debug Logs
 
-Se la modalità **DEBUG** è stata attivata durante la sessione, disattivandola (o premendo **■ STOP**) viene chiesto se salvare o eliminare il file di log tecnico (`transcriber.log`):
+If **DEBUG** mode was enabled during the session, disabling it (or pressing **■ STOP**) prompts you to save or delete the technical log file (`transcriber.log`):
 
-- **Salva**: il file viene rinominato con un timestamp (es. `debug_20260710_143200.log`) e conservato.
-- **Elimina**: il contenuto del file viene cancellato.
+- **Save**: the file is renamed with a timestamp (e.g. `debug_20260710_143200.log`) and kept.
+- **Delete**: the file's contents are erased.
 
 ---
 
-## Risoluzione dei problemi
+## Troubleshooting
 
-**L'avvio dell'applicazione impiega quasi un minuto**
-Normale: è il tempo di caricamento del modello Whisper in memoria/VRAM, che avviene automaticamente all'apertura della finestra. Non serve fare nulla, basta attendere che "▶ AVVIA" si attivi.
+**Starting the application takes almost a minute**
+Normal: this is the time needed to load the Whisper model into memory/VRAM, which happens automatically when the window opens. There's nothing to do, just wait for "▶ START" to become active.
 
-**Il pulsante "▶ AVVIA" resta disabilitato a lungo o non si attiva mai**
-Consulta la barra inferiore o la finestra di **Debug**: se compare un messaggio di errore relativo al caricamento del modello, la causa più comune è la GPU non disponibile o senza spazio sufficiente in VRAM. Verifica anche la connessione internet se è il primo avvio in assoluto (serve per scaricare il modello).
+**The "▶ START" button stays disabled for a long time or never activates**
+Check the bottom bar or the **Debug** window: if an error message related to model loading appears, the most common cause is the GPU being unavailable or not having enough VRAM. Also check your internet connection if this is the very first launch (needed to download the model).
 
-**Nessuna trascrizione compare nonostante si stia parlando alla radio**
-Controlla il misuratore RMS: se il livello resta sempre sotto la soglia (barra grigia), il microfono potrebbe non essere quello giusto nelle impostazioni di sistema, oppure il volume è troppo basso. In alternativa, prova a ridurre `Aggressiveness` o `Activation ratio` nella finestra di configurazione.
+**No transcription appears even though someone is speaking on the radio**
+Check the RMS meter: if the level always stays below the threshold (gray bar), the microphone might not be the right one in the system settings, or the volume is too low. Alternatively, try lowering `Aggressiveness` or `Activation ratio` in the configuration window.
 
-**La trascrizione produce parole ripetute senza senso**
-Sintomo tipico quando un segmento audio contiene una pausa lunga di silenzio al suo interno. Prova a ridurre `Silence timeout (s)` nella sezione VAD, in modo che i segmenti vengano tagliati più frequentemente sulle pause.
+**The transcription produces repeated, nonsensical words**
+A typical symptom when an audio segment contains a long silent pause in the middle. Try lowering `Silence timeout (s)` in the VAD section, so segments get cut more frequently at pauses.
 
-**Ho modificato la configurazione nella finestra "⚙️ Config" ma non è cambiato nulla**
-Assicurati di aver premuto **🔄 APPLICA** (non solo "OK"): "OK" da solo non salva le modifiche se non è stata premuta almeno una volta "Applica" durante quella sessione della finestra.
+**I changed the configuration in the "⚙️ Config" window but nothing changed**
+Make sure you pressed **🔄 APPLY** (not just "OK"): "OK" alone does not save the changes if "Apply" hasn't been pressed at least once during that window session.
 
-**Il pulsante "Ric CFG Live" non sembra avere effetto**
-Funziona solo mentre la trascrizione è **in corso** (dopo aver premuto AVVIA). Inoltre, modifiche al nome del modello o al device non vengono applicate da questo pulsante: richiedono di chiudere e riaprire l'intera applicazione.
+**The "Live Reload CFG" button doesn't seem to have any effect**
+It only works while transcription is **running** (after pressing START). Also, changes to the model name or device are not applied by this button: they require closing and reopening the entire application.
 
-**Per problemi non risolti da questa guida**, consulta il [Manuale Tecnico](technical_manual.md) o apri la finestra di Debug per raccogliere informazioni utili prima di segnalare il problema.
+**For issues not resolved by this guide**, see the [Technical Manual](technical_manual_en.md) or open the Debug window to gather useful information before reporting the problem.
